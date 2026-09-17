@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#ffffff" />
+  <title>Gildongmu Test</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%232f6fe6'/%3E%3Ccircle cx='16' cy='16' r='6' fill='none' stroke='white' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='1.8' fill='white'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body>
+  <!-- 아이콘 모음 -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-traffic" viewBox="0 0 24 24"><rect x="8" y="2.5" width="8" height="19" rx="3"/><circle cx="12" cy="7.2" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="16.8" r="1.4"/></symbol>
+      <symbol id="i-walking" viewBox="0 0 24 24"><circle cx="13" cy="4.2" r="1.8"/><path d="M12.5 8.2 9.8 13l3.2 2.3V21M9.8 13l-2.6 1.2M13.2 9.4l2.6 3 3 .9M10.4 15.6 8.2 21"/></symbol>
+      <symbol id="i-bus" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="14.5" rx="3"/><path d="M4 11.5h16M8 17.5v2.2M16 17.5v2.2"/><circle cx="8" cy="14.5" r=".9"/><circle cx="16" cy="14.5" r=".9"/></symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.6l1.3-2h5.2l1.3 2h1.6A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z"/><circle cx="12" cy="12.5" r="3.4"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke-linejoin="round"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.2" fill="currentColor"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m6 12.5 4 4 8-9"/></symbol>
+    </defs>
+  </svg>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="6.2" fill="none" stroke="#fff" stroke-width="3"/><circle cx="16" cy="16" r="1.9" fill="#fff"/></svg></span>
+      <div class="brand-text">
+        <span class="brand-name">Gildongmu</span>
+        <span class="brand-sub">실시간 모델 테스트</span>
+      </div>
+    </div>
+    <div class="status-group">
+      <span class="status" id="server-status" data-state="unknown"><i></i>서버</span>
+      <span class="status" id="storage-status" data-state="unknown"><i></i>저장</span>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="panel" id="setup-panel">
+      <h2 class="panel-title">테스트 설정</h2>
+
+      <div class="field">
+        <label>기능</label>
+        <div class="mode-tiles" id="mode-seg">
+          <button type="button" data-mode="traffic" class="active"><svg class="icon"><use href="#i-traffic"/></svg><span>신호등</span></button>
+          <button type="button" data-mode="walking"><svg class="icon"><use href="#i-walking"/></svg><span>도보 장애물</span></button>
+          <button type="button" data-mode="bus"><svg class="icon"><use href="#i-bus"/></svg><span>버스</span></button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="model-select">모델</label>
+        <select id="model-select"></select>
+        <p class="hint" id="model-hint"></p>
+      </div>
+
+      <div class="field">
+        <label for="device-select">촬영 기기</label>
+        <select id="device-select">
+          <option value="iPhone 15 Pro">iPhone 15 Pro</option>
+          <option value="Galaxy S24+">Galaxy S24+</option>
+          <option value="Galaxy Quantum 3">Galaxy Quantum 3</option>
+          <option value="Galaxy S25 Ultra">Galaxy S25 Ultra</option>
+          <option value="__custom__">직접 입력…</option>
+        </select>
+        <input type="text" id="device-custom" placeholder="기기 이름 입력 (예: Pixel 8)" maxlength="64" hidden />
+      </div>
+
+      <div class="field">
+        <label for="note">테스트 메모 <span class="optional">선택</span></label>
+        <input type="text" id="note" placeholder="예: 역광, 야간, 횡단보도 앞" maxlength="200" />
+      </div>
+    </section>
+
+    <div class="run-info" id="run-info" hidden></div>
+
+    <section class="camera-card">
+      <div class="camera-frame" id="camera-frame">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div class="camera-placeholder" id="camera-placeholder">
+          <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
+          <div class="placeholder-icon"><svg class="icon"><use href="#i-camera"/></svg></div>
+          <p>카메라를 시작하면<br />미리보기가 표시됩니다</p>
+        </div>
+        <div class="badge" id="session-badge" data-state="idle">대기</div>
+        <div class="event-banner" id="event-banner" hidden></div>
+      </div>
+      <div class="result-row" id="result-row">
+        <span class="muted">최근 결과 없음</span>
+      </div>
+    </section>
+
+    <section class="metrics" id="metrics">
+      <div class="metric" data-kind="time"><span class="metric-label">추론</span><div class="metric-line"><span class="metric-value" id="m-inference">–</span><span class="metric-unit">ms</span></div></div>
+      <div class="metric" data-kind="time"><span class="metric-label">서버 처리</span><div class="metric-line"><span class="metric-value" id="m-server">–</span><span class="metric-unit">ms</span></div></div>
+      <div class="metric" data-kind="time"><span class="metric-label">왕복</span><div class="metric-line"><span class="metric-value" id="m-rtt">–</span><span class="metric-unit">ms</span></div></div>
+      <div class="metric" data-kind="rate"><span class="metric-label">수신 FPS</span><div class="metric-line"><span class="metric-value" id="m-fps">–</span></div></div>
+      <div class="metric" data-kind="count"><span class="metric-label">전송 프레임</span><div class="metric-line"><span class="metric-value" id="m-frames">0</span><span class="metric-unit">장</span></div></div>
+      <div class="metric" data-kind="fail"><span class="metric-label">실패</span><div class="metric-line"><span class="metric-value" id="m-fail">0</span><span class="metric-unit">회</span></div></div>
+    </section>
+
+    <section class="panel summary" id="summary" hidden>
+      <h2 class="summary-title"><span class="check"><svg class="icon"><use href="#i-check"/></svg></span>저장 완료</h2>
+      <dl>
+        <dt>세션</dt><dd id="s-id"></dd>
+        <dt>프레임</dt><dd id="s-frames"></dd>
+        <dt>평균 추론 / 서버</dt><dd id="s-avg"></dd>
+        <dt>저장 위치</dt><dd id="s-path" class="mono"></dd>
+      </dl>
+    </section>
+
+    <div class="alert" id="alert" hidden></div>
+  </main>
+
+  <footer class="actions">
+    <div class="actions-inner">
+      <button type="button" class="btn btn-secondary" id="btn-camera"><svg class="icon"><use href="#i-camera"/></svg><span class="btn-label">카메라 시작</span></button>
+      <button type="button" class="btn btn-primary" id="btn-start" disabled><svg class="icon"><use href="#i-play"/></svg><span class="btn-label">테스트 시작</span></button>
+      <button type="button" class="btn btn-danger" id="btn-stop" hidden><svg class="icon"><use href="#i-stop"/></svg><span class="btn-label">테스트 종료</span></button>
+    </div>
+  </footer>
+
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/camera.js"></script>
+  <script src="/static/js/overlay.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
