@@ -5,6 +5,25 @@ window.GOverlay = (() => {
   const ctx = canvas.getContext("2d");
   const COLORS = ["#4f8cff", "#34c759", "#ffb020", "#ff4d4f", "#b57bff", "#22c9c9"];
 
+  function describeDetection(d) {
+    const state = d.class_name === "pedestrian_signal" ? d.extra?.signal_state : null;
+    if (state === "red" || state === "green" || state === "unknown") {
+      const label = { red: "빨간불", green: "초록불", unknown: "신호 미확인" }[state];
+      const score = d.extra?.color_confidence;
+      return {
+        label,
+        confidenceText: state !== "unknown" && typeof score === "number" && Number.isFinite(score)
+          ? `${(score * 100).toFixed(1)}%` : "",
+        color: { red: "#e5393b", green: "#1fa84a", unknown: "#888888" }[state],
+      };
+    }
+    return {
+      label: d.class_name,
+      confidenceText: `${(d.confidence * 100).toFixed(0)}%`,
+      color: COLORS[(d.class_id ?? 0) % COLORS.length],
+    };
+  }
+
   function fit() {
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -40,10 +59,12 @@ window.GOverlay = (() => {
       const b = d.box;
       const x1 = r.x + b.x1 * r.w, y1 = r.y + b.y1 * r.h;
       const x2 = r.x + b.x2 * r.w, y2 = r.y + b.y2 * r.h;
-      const color = COLORS[(d.class_id ?? 0) % COLORS.length];
+      const display = describeDetection(d);
+      const color = display.color;
       ctx.strokeStyle = color;
       ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-      const label = `${d.class_name} ${(d.confidence * 100).toFixed(0)}%` + (d.track_id != null ? ` #${d.track_id}` : "");
+      const label = `${display.label}${display.confidenceText ? ` ${display.confidenceText}` : ""}`
+        + (d.track_id != null ? ` #${d.track_id}` : "");
       const tw = ctx.measureText(label).width + 10, th = 18;
       const ly = y1 - th < r.y ? y1 : y1 - th;
       ctx.fillStyle = color;
@@ -54,5 +75,5 @@ window.GOverlay = (() => {
   }
 
   window.addEventListener("resize", () => fit());
-  return { draw, clear };
+  return { draw, clear, describeDetection };
 })();

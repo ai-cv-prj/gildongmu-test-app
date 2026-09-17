@@ -63,14 +63,29 @@ def validate(result: object, mode: str) -> list[str]:
     return errs
 
 
+def detection_style(d: dict) -> tuple[str, tuple[int, int, int]]:
+    if d.get("class_name") == "pedestrian_signal":
+        extra = d.get("extra") or {}
+        state = extra.get("signal_state")
+        colors = {"red": (59, 57, 229), "green": (74, 168, 31), "unknown": (136, 136, 136)}
+        if state in colors:
+            score = extra.get("color_confidence")
+            label = state.upper()
+            if state != "unknown" and isinstance(score, (int, float)):
+                label += f" {score * 100:.1f}%"
+            return label, colors[state]
+    return f"{d['class_name']} {d['confidence']:.2f}", (255, 140, 60)
+
+
 def draw(frame: np.ndarray, result: dict) -> np.ndarray:
     out = frame.copy()
     h, w = out.shape[:2]
     for d in result.get("detections", []):
         b = d["box"]
         p1, p2 = (int(b["x1"] * w), int(b["y1"] * h)), (int(b["x2"] * w), int(b["y2"] * h))
-        cv2.rectangle(out, p1, p2, (255, 140, 60), 2)
-        cv2.putText(out, f"{d['class_name']} {d['confidence']:.2f}", (p1[0], max(16, p1[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 140, 60), 2)
+        label, color = detection_style(d)
+        cv2.rectangle(out, p1, p2, color, 2)
+        cv2.putText(out, label, (p1[0], max(16, p1[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     return out
 
 
