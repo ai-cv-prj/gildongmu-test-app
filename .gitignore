@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+backend/data/
+backend/models/**
+!backend/models/*/
+!backend/models/*/.gitkeep
+node_modules/
+screenshots/
+check_output/
+workbench/
