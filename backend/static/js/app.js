@@ -43,7 +43,10 @@
   function showResult(res) {
     const dets = res.detections || [];
     el.resultRow.innerHTML = dets.length
-      ? dets.map((d) => `<span class="chip">${d.class_name}<b>${(d.confidence * 100).toFixed(0)}%</b></span>`).join("")
+      ? dets.map((d) => {
+        const display = GOverlay.describeDetection(d);
+        return `<span class="chip">${display.label}${display.confidenceText ? `<b>${display.confidenceText}</b>` : ""}</span>`;
+      }).join("")
       : `<span class="muted">검출 없음 · frame ${res.frame_id}</span>`;
     const ev = res.event || {};
     let text = "", tone = "";
