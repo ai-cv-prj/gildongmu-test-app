@@ -1,4 +1,8 @@
-"""세션 파일 저장: frames/*.jpg, results.jsonl, manifest.json."""
+"""
+file_path: backend/app/services/storage_service.py
+
+세션의 원본 프레임, 추론 결과, 요약과 실시간 탐지 영상을 저장한다.
+"""
 from __future__ import annotations
 
 import json
@@ -111,6 +115,22 @@ class SessionStorage:
                 os.fsync(f.fileno())
         except OSError as exc:
             raise StorageError(f"cannot save frame: {exc}") from exc
+        return rel
+
+    # 실시간 탐지 녹화 영상 저장
+    def save_recording(self, session_id: str, video_bytes: bytes) -> str:
+        """
+        카메라와 탐지 오버레이가 합성된 WebM 영상을 세션 폴더에 저장한다.
+        """
+        rel = "realtime_overlay.webm"
+        path = self.session_dir(session_id) / rel
+        try:
+            with open(path, "wb") as file:
+                file.write(video_bytes)
+                file.flush()
+                os.fsync(file.fileno())
+        except OSError as exc:
+            raise StorageError(f"cannot save recording: {exc}") from exc
         return rel
 
     def append_result(self, session_id: str, record: dict[str, Any]) -> None:
