@@ -362,6 +362,14 @@ backend/data/sessions/
 - **폴더가 곧 기록입니다.** 필요 없는 테스트는 폴더를 지우면 되고, 팀에 공유할 때는 폴더를 압축해 보내면 됩니다.
 - 용량은 10분 테스트에 대략 200~400MB 입니다. 디스크 여유가 `MIN_FREE_DISK_GB`(기본 2GB)보다 적으면 새 테스트가 시작되지 않습니다.
 
+저장된 프레임에 탐지 결과를 그려 보려면 아래 명령을 실행하세요. 원본 `frames/`는 그대로 두고 `annotated/`에 프레임별 사진과 `contact_sheet.jpg`(전체 모음)를 만듭니다. 탐지하지 못한 프레임에는 `NO DETECTION`이 표시됩니다.
+
+```bash
+.venv/bin/python scripts/visualize_session.py backend/data/sessions/<세션 ID>
+```
+
+화면에 그리는 박스는 `results.jsonl`의 `detections` 목록입니다. 신호등 모델의 `detected_crosswalk_count`는 감지 개수만 기록하므로 횡단보도 박스는 표시되지 않습니다.
+
 결과 파일 읽기 예시:
 
 ```python
