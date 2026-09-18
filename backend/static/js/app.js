@@ -15,12 +15,14 @@
     alert: $("alert"),
   };
 
-  const SETTINGS = { confidence: 0.4, image_max_side: 960, target_fps: 5, jpeg_quality: 0.8, timeout_ms: 5000, retry_wait_ms: 500 };
+  // 처리 가능한 만큼만 전송한다. 상한은 10FPS지만 요청은 항상 하나씩 보낸다.
+  const SETTINGS = { confidence: 0.4, image_max_side: 640, target_fps: 10, jpeg_quality: 0.8, timeout_ms: 5000, retry_wait_ms: 500 };
   const MODE_LABEL = { traffic: "신호등", walking: "도보 장애물", bus: "버스" };
 
   const state = {
     mode: "traffic", models: [], cameraOn: false, sessionId: null, running: false,
     frameId: 0, sent: 0, failed: 0, recvTimes: [], stopping: false,
+    timings: null, loopTask: null, logWarning: "",
   };
 
   // ---------- 상태 표시 ----------
@@ -28,6 +30,7 @@
   function setLabel(btn, text) { btn.querySelector(".btn-label").textContent = text; }
   function setBadge(s, text) { el.badge.dataset.state = s; el.badge.textContent = text; }
   function showAlert(msg, tone = "error") {
+    if (!msg && state.logWarning) { msg = state.logWarning; tone = "info"; }
     if (!msg) { el.alert.hidden = true; return; }
     el.alert.hidden = false; el.alert.dataset.tone = tone; el.alert.textContent = msg;
   }
@@ -87,8 +90,8 @@
     } catch (_) { /* ignore */ }
     el.deviceCustom.hidden = el.deviceSelect.value !== "__custom__";
   }
-  function savePrefs(extra = {}) {
-    try { localStorage.setItem("gildongmu.prefs", JSON.stringify({ mode: state.mode, device: currentDevice(), ...extra })); } catch (_) { /* ignore */ }
+  function savePrefs() {
+    try { localStorage.setItem("gildongmu.prefs", JSON.stringify({ mode: state.mode, device: currentDevice() })); } catch (_) { /* ignore */ }
   }
 
   function selectMode(mode, refill = true) {
@@ -182,11 +185,17 @@
       device_type: currentDevice(),
       note: el.note.value.trim(),
       settings: { confidence: SETTINGS.confidence, image_max_side: SETTINGS.image_max_side, target_fps: SETTINGS.target_fps, jpeg_quality: SETTINGS.jpeg_quality },
-      client: { user_agent: navigator.userAgent, screen_width: screen.width, screen_height: screen.height, platform: navigator.platform || "" },
+      client: { user_agent: navigator.userAgent, screen_width: screen.width, screen_height: screen.height, platform: navigator.platform || "", app_version: "latency-v3-cleanup" },
     };
     try {
       const r = await GApi.createSession(body);
       state.sessionId = r.session_id;
+      state.logWarning = "";
+      state.timings = GApi.createTimings(r.session_id, (message) => {
+        if (state.sessionId !== r.session_id) return;
+        state.logWarning = message;
+        if (message) showAlert(message, "info");
+      });
       state.running = true;
       state.frameId = 0; state.sent = 0; state.failed = 0; state.recvTimes = [];
       updateMetrics(null, null);
@@ -201,7 +210,7 @@
       }
       refreshButtons();
       window.scrollTo({ top: 0, behavior: "smooth" });
-      loop();
+      state.loopTask = loop(r.session_id, state.timings);
     } catch (e) {
       if (e.code === "session_conflict" && e.detail && e.detail.active_session) {
         showAlert(`이미 실행 중인 세션이 있습니다 (${e.detail.active_session.id}). 서버에서 종료 후 다시 시도하세요.`);
@@ -228,6 +237,10 @@
           showAlert(`실시간 녹화 저장 실패: ${recordError.message}`);
         }
       }
+      // 마지막 요청과 PNG 디코딩을 정리한 뒤 마지막 묶음까지 저장한다.
+      await state.loopTask;
+      GOverlay.clear();
+      if (!await state.timings.finish()) throw new Error("지연 로그가 아직 저장되지 않았습니다");
       const r = await GApi.stopSession(state.sessionId);
       const s = r.session;
       el.sId.textContent = s.id;
@@ -236,7 +249,6 @@
       el.sPath.textContent = s.storage_path;
       el.summary.hidden = false;
       state.sessionId = null;
-      GOverlay.clear();
       el.banner.hidden = true;
       el.resultRow.innerHTML = '<span class="muted">최근 결과 없음</span>';
       setBadge(state.cameraOn ? "camera" : "idle", state.cameraOn ? "카메라 켜짐" : "대기");
@@ -258,9 +270,11 @@
   // ---------- 전송 루프: 한 번에 요청 하나, 응답 후 최신 프레임 ----------
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  async function loop() {
+  /** 한 번에 한 프레임을 보내며 각 단계의 브라우저 시간을 기록한다. */
+  async function loop(sessionId, timings) {
     const interval = 1000 / SETTINGS.target_fps;
     let paused = false;
+    let previousCapture = null;
     while (state.running) {
       if (document.hidden || !GCamera.active()) {
         if (!paused) { paused = true; setBadge("paused", document.hidden ? "백그라운드 · 일시정지" : "카메라 대기"); }
@@ -270,22 +284,59 @@
       if (paused) { paused = false; setBadge("running", "테스트 중"); showAlert(null); }
 
       const t0 = performance.now();
-      const blob = await GCamera.capture(SETTINGS.image_max_side, SETTINGS.jpeg_quality);
-      if (!blob) { await sleep(100); continue; }
+      const capturedAt = Date.now(); // JPEG 생성 이전 시각으로 서버 로그와 연결한다.
       const frameId = ++state.frameId;
-      const capturedAt = Date.now();
+      const row = {
+        frame_id: frameId, captured_at_ms: capturedAt, capture_started_ms: t0,
+        capture_ms: 0,
+        capture_interval_ms: previousCapture == null ? null : t0 - previousCapture,
+        jpeg_bytes: 0, recording_active: GRecorder.active(),
+        visibility: document.visibilityState, status: "cancelled", throttle_wait_ms: 0, retry_wait_ms: 0,
+      };
+      previousCapture = t0;
+      let drawing;
       try {
-        const res = await GApi.uploadFrame(state.sessionId, blob, frameId, capturedAt, SETTINGS.timeout_ms);
+        const blob = await GCamera.capture(SETTINGS.image_max_side, SETTINGS.jpeg_quality);
+        row.capture_ms = performance.now() - t0;
+        row.capture_backend = GCamera.captureBackend?.() || "canvas";
+        row.jpeg_bytes = blob?.size || 0;
         if (!state.running) break;
-        const rtt = performance.now() - t0;
+        if (!blob) {
+          row.status = "error"; row.error_code = "capture_empty";
+          const waitStarted = performance.now();
+          await sleep(100);
+          row.retry_wait_ms = performance.now() - waitStarted;
+          continue;
+        }
+        row.request_started_ms = performance.now();
+        const res = await GApi.uploadFrame(sessionId, blob, frameId, capturedAt, SETTINGS.timeout_ms);
+        row.response_received_ms = performance.now();
+        row.request_ms = row.response_received_ms - row.request_started_ms;
+        row.http_status = 200;
+        if (!state.running) break;
+        row.status = "ok";
         state.sent += 1;
-        state.recvTimes.push(performance.now());
-        if (res.frame_id === frameId) { GOverlay.draw(res.detections, res.event); showResult(res); }
-        updateMetrics(res.timing, rtt);
+        state.recvTimes.push(row.response_received_ms);
+        if (res.frame_id === frameId) { drawing = GOverlay.draw(res.detections, res.event); showResult(res); }
+        // 화면의 기존 '왕복' 표시는 캡처를 포함한 값으로 유지한다.
+        updateMetrics(res.timing, row.response_received_ms - t0);
         if (!res.saved) setStatus(el.storageStatus, "warn", "저장 꺼짐"); else setStatus(el.storageStatus, "ok", "저장");
         setStatus(el.serverStatus, "ok", "서버");
         showAlert(null);
+        const remain = interval - (performance.now() - t0);
+        if (remain > 0) {
+          const waitStarted = performance.now();
+          await sleep(remain);
+          row.throttle_wait_ms = performance.now() - waitStarted;
+        }
       } catch (e) {
+        row.status = "error";
+        row.error_code = e.code || (row.request_started_ms == null ? "capture_failed" : "client_error");
+        row.http_status = e.status || 0;
+        if (row.request_started_ms == null) row.capture_ms = performance.now() - t0;
+        if (row.request_ms == null && row.request_started_ms != null) {
+          row.request_ms = performance.now() - row.request_started_ms;
+        }
         if (!state.running) break;
         state.failed += 1;
         updateMetrics(null, null);
@@ -302,14 +353,16 @@
           setStatus(el.serverStatus, "bad", "서버 끊김");
           showAlert(`서버 응답 없음 (${e.message}). 재시도 중…`, "info");
         } else {
-          showAlert(`전송 오류: ${e.message}`);
+          showAlert(`프레임 처리 오류: ${e.message}`);
         }
+        const waitStarted = performance.now();
         await sleep(SETTINGS.retry_wait_ms);
-        continue;
+        row.retry_wait_ms = performance.now() - waitStarted;
+      } finally {
+        timings.track(row, drawing);
       }
-      const remain = interval - (performance.now() - t0);
-      if (remain > 0) await sleep(remain);
     }
+    if (!state.stopping) { GOverlay.clear(); void timings.finish(); }
   }
 
   // ---------- 이벤트 ----------
@@ -340,7 +393,7 @@
       refreshButtons();
     }, 800);
   });
-  window.addEventListener("beforeunload", (e) => { if (state.running) { e.preventDefault(); e.returnValue = ""; } });
+  window.addEventListener("beforeunload", (e) => { if (state.sessionId) { e.preventDefault(); e.returnValue = ""; } });
 
   // ---------- 초기화 ----------
   loadPrefs();
