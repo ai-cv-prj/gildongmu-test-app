@@ -114,6 +114,8 @@ class SessionSummary(BaseModel):
     p95_server_ms: Optional[float]
     storage_path: str
     last_error: Optional[str]
+    video_status: Optional[str] = None
+    video_path: Optional[str] = None
 
 
 class SessionDetail(SessionSummary):

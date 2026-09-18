@@ -125,6 +125,7 @@ def test_stop_summary_matches_saved_files(client: TestClient, settings: Settings
     assert body["already_stopped"] is False
     s = body["session"]
     assert s["status"] == "completed" and s["frame_count"] == n_ok and s["error_count"] == 1
+    assert s["video_status"] == "pending"
     assert s["ended_at"] and s["average_inference_ms"] > 0 and s["p95_server_ms"] > 0
 
     sdir = settings.sessions_dir / sid
@@ -136,6 +137,16 @@ def test_stop_summary_matches_saved_files(client: TestClient, settings: Settings
     assert lines[0]["image_path"] == "frames/00000001.jpg" and lines[0]["model_id"] == "bus-mock-v1"
     manifest = json.loads((sdir / "manifest.json").read_text())
     assert manifest["status"] == "completed" and manifest["frame_count"] == n_ok and manifest["device_type"] == "Galaxy Quantum 3"
+    assert manifest["video_status"] == "ready"
+    assert client.get(f"/api/sessions/{sid}").json()["video_status"] == "ready"
+    video = cv2.VideoCapture(str(sdir / "annotated" / "results.mp4"))
+    assert video.isOpened()
+    assert int(video.get(cv2.CAP_PROP_FRAME_COUNT)) == n_ok
+    ok, image = video.read()
+    assert ok and image.shape[:2] == (640, 480)
+    video.release()
+    response = client.get(f"/api/sessions/{sid}/video")
+    assert response.status_code == 200 and response.headers["content-type"] == "video/mp4"
 
     # idempotent stop
     r2 = client.post(f"/api/sessions/{sid}/stop")

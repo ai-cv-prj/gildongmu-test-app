@@ -352,20 +352,29 @@ backend/data/sessions/
 └─ 20260917_143821_iphone-15-pro_traffic/     날짜_시각_기기_기능 (PC 로컬 시각)
    ├─ manifest.json                           세션 요약
    ├─ frames/00000001.jpg ...                 휴대폰이 보낸 입력 프레임
-   └─ results.jsonl                           프레임당 한 줄의 추론 결과
+   ├─ results.jsonl                           프레임당 한 줄의 추론 결과
+   └─ annotated/results.mp4                   종료 후 생성되는 탐지 결과 영상
 ```
 
 - **manifest.json**: 기기, 메모, 기능, 모델 ID, 가중치 파일 이름과 해시, 시작·종료 시각, 상태, 프레임 수, 실패 수, 평균·p95 처리 시간, 전송 설정, 휴대폰 브라우저 정보.
 - **frames/**: 초당 최대 5장, 긴 변 960px JPEG. 파일 번호가 프레임 번호입니다. 박스가 그려지지 않은 원본이라 다른 가중치로 다시 추론해 볼 수 있습니다.
 - **results.jsonl**: 프레임 번호, 촬영 시각, 서버 수신 시각, 이미지 크기, 검출 목록, event, 단계별 처리 시간, 이미지 경로. 실패한 프레임은 `error` 에 원인이 남습니다.
+- **annotated/results.mp4**: 앱에서 테스트 종료를 누르면 서버가 탐지 박스와 상태를 그린 영상을 백그라운드에서 만듭니다. 프레임 처리 중에는 영상을 인코딩하지 않습니다. 영상은 오디오 없이 `manifest.json`의 `target_fps`로 재생됩니다. `SAVE_FRAMES=false`이거나 저장된 프레임이 없으면 만들지 않습니다.
+- **video_status**: 세션 조회 API와 `manifest.json`에서 `pending`(변환 중), `ready`(완료), `failed`(실패), `no_frames`(저장된 프레임 없음)를 확인합니다. 서버가 변환 도중 재시작되면 `pending` 영상을 다시 생성합니다. 변환 실패 원인은 `manifest.json`의 `video_error`에 남습니다. 변환 중 바로 다음 테스트를 시작하면 CPU·디스크 사용이 겹칠 수 있습니다.
 - 상태는 `running` / `completed` / `aborted` 입니다. 서버가 테스트 도중 꺼지면 다음에 켤 때 `aborted` 로 바뀌고, 그때까지 받은 프레임은 그대로 남아 있습니다.
 - **폴더가 곧 기록입니다.** 필요 없는 테스트는 폴더를 지우면 되고, 팀에 공유할 때는 폴더를 압축해 보내면 됩니다.
 - 용량은 10분 테스트에 대략 200~400MB 입니다. 디스크 여유가 `MIN_FREE_DISK_GB`(기본 2GB)보다 적으면 새 테스트가 시작되지 않습니다.
 
-저장된 프레임에 탐지 결과를 그려 보려면 아래 명령을 실행하세요. 원본 `frames/`는 그대로 두고 `annotated/`에 프레임별 사진과 `contact_sheet.jpg`(전체 모음)를 만듭니다. 탐지하지 못한 프레임에는 `NO DETECTION`이 표시됩니다.
+프레임별 결과 사진도 필요하면 아래 명령을 실행하세요. 원본 `frames/`는 그대로 두고 `annotated/`에 프레임별 사진과 `results.mp4`를 만듭니다. Contact sheet는 저장하지 않습니다. 탐지하지 못한 프레임에는 `NO DETECTION`이 표시됩니다.
 
 ```bash
 .venv/bin/python scripts/visualize_session.py backend/data/sessions/<세션 ID>
+```
+
+여러 세션을 순서대로 하나의 영상으로 이어 붙이려면 `--combine`을 사용합니다. 세션 시작 부분에는 구분 화면이 들어갑니다.
+
+```bash
+.venv/bin/python scripts/visualize_session.py backend/data/sessions/20260918_*_traffic --combine backend/data/sessions/20260918_results.mp4
 ```
 
 화면에 그리는 박스는 `results.jsonl`의 `detections` 목록입니다. 신호등 모델의 `detected_crosswalk_count`는 감지 개수만 기록하므로 횡단보도 박스는 표시되지 않습니다.
@@ -379,13 +388,7 @@ ok = [r for r in rows if r["error"] is None]
 print(len(ok), "frames,", sum(r["timing"]["inference_ms"] for r in ok) / len(ok), "ms 평균 추론")
 ```
 
-프레임을 영상으로 이어붙이기:
-
-```bash
-ffmpeg -framerate 5 -pattern_type glob -i 'backend/data/sessions/<세션>/frames/*.jpg' -pix_fmt yuv420p out.mp4
-```
-
-앱 안에 기록 조회 화면은 없습니다. 필요하면 API 로 볼 수 있습니다: `GET /api/sessions`, `GET /api/sessions/{id}`, `GET /api/sessions/{id}/results`, `GET /api/sessions/{id}/frames/{frame_id}.jpg`. 전체 API 문서는 서버를 켠 상태에서 http://127.0.0.1:8000/docs 입니다.
+앱 안에 기록 조회 화면은 없습니다. 필요하면 API 로 볼 수 있습니다: `GET /api/sessions`, `GET /api/sessions/{id}`, `GET /api/sessions/{id}/results`, `GET /api/sessions/{id}/frames/{frame_id}.jpg`, `GET /api/sessions/{id}/video`(영상 다운로드). 전체 API 문서는 서버를 켠 상태에서 http://127.0.0.1:8000/docs 입니다.
 
 ## 7. Git 사용 규칙
 
