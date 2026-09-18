@@ -1,7 +1,7 @@
 """API 요청/응답 스키마."""
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,7 @@ class ClientInfo(BaseModel):
     screen_width: int = 0
     screen_height: int = 0
     platform: str = ""
+    app_version: str = Field(default="", max_length=64)
 
 
 class SessionSettings(BaseModel):
@@ -129,3 +130,45 @@ class SessionList(BaseModel):
 class StopResponse(BaseModel):
     session: SessionSummary
     already_stopped: bool
+
+
+# 브라우저에서 측정한 프레임별 지연 기록
+Milliseconds = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+
+class ClientTiming(BaseModel):
+    """동일한 브라우저 시계를 기준으로 캡처부터 오버레이 그리기까지 측정한다."""
+
+    model_config = {"extra": "forbid"}
+    frame_id: int = Field(ge=1)
+    captured_at_ms: int = Field(ge=0)
+    capture_started_ms: Milliseconds
+    capture_ms: Milliseconds
+    capture_backend: Literal["worker_video_frame", "worker", "canvas"] | None = None
+    capture_interval_ms: Milliseconds | None = None
+    request_started_ms: Milliseconds | None = None
+    response_received_ms: Milliseconds | None = None
+    request_ms: Milliseconds | None = None
+    overlay_drawn_ms: Milliseconds | None = None
+    response_to_overlay_ms: Milliseconds | None = None
+    capture_to_overlay_ms: Milliseconds | None = None
+    overlay_interval_ms: Milliseconds | None = None
+    previous_overlay_age_ms: Milliseconds | None = None
+    throttle_wait_ms: Milliseconds = 0
+    retry_wait_ms: Milliseconds = 0
+    jpeg_bytes: int = Field(ge=0)
+    recording_active: bool
+    visibility: Literal["visible", "hidden"]
+    status: Literal["ok", "error", "cancelled"]
+    overlay_status: Literal["drawn", "superseded", "error", "skipped"] = "skipped"
+    error_code: str | None = Field(default=None, max_length=64)
+    http_status: int | None = Field(default=None, ge=0, le=599)
+
+
+class ClientTimingBatch(BaseModel):
+    """로그 업로드량을 제한하고 재전송한 묶음을 식별한다."""
+
+    model_config = {"extra": "forbid"}
+    batch_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9-]+$")
+    dropped_records: int = Field(default=0, ge=0)
+    records: list[ClientTiming] = Field(min_length=1, max_length=25)
