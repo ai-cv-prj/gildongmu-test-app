@@ -1,4 +1,7 @@
-// 화면 상태와 실시간 전송 루프
+/**
+ * file_path: backend/static/js/app.js
+ * 카메라 프레임 전송과 테스트 상태를 관리하고 검출·보행가능·횡단보도 결과를 표시한다.
+ */
 (() => {
   const $ = (id) => document.getElementById(id);
   const el = {
@@ -40,6 +43,8 @@
     el.mFps.textContent = state.recvTimes.length ? (state.recvTimes.length / 3).toFixed(1) : "–";
   }
 
+  // 검출 및 보행가능·횡단보도 영역 요약 표시
+  /** 결과 종류에 맞춰 검출 목록 또는 보행가능·횡단보도 영역 비율을 보여준다. */
   function showResult(res) {
     const dets = res.detections || [];
     el.resultRow.innerHTML = dets.length
@@ -49,6 +54,11 @@
       }).join("")
       : `<span class="muted">검출 없음 · frame ${res.frame_id}</span>`;
     const ev = res.event || {};
+    if (ev.type === "walking_warning" && Number.isFinite(ev.walkable_ratio)) {
+      const crosswalk = Number.isFinite(ev.crosswalk_ratio)
+        ? ` · 횡단보도(핑크) ${(ev.crosswalk_ratio * 100).toFixed(1)}%` : "";
+      el.resultRow.textContent = `보행가능(초록) ${(ev.walkable_ratio * 100).toFixed(1)}%${crosswalk} · frame ${res.frame_id}`;
+    }
     let text = "", tone = "";
     if (ev.type === "traffic_signal") {
       tone = ev.signal_state === "green" ? "green" : ev.signal_state === "red" ? "red" : "";

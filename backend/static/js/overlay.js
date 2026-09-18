@@ -1,9 +1,14 @@
-// 정규화 좌표(0~1) 검출 박스를 video 위 canvas 에 그린다. object-fit: contain 여백을 보정한다.
+/**
+ * file_path: backend/static/js/overlay.js
+ * 영상 위에 검출 박스 또는 보행가능(초록색)·횡단보도(핑크색) 마스크를 표시한다.
+ * object-fit: contain 여백을 보정하고 종료 후 늦게 도착한 마스크는 무시한다.
+ */
 window.GOverlay = (() => {
   const canvas = document.getElementById("overlay");
   const video = document.getElementById("video");
   const ctx = canvas.getContext("2d");
   const COLORS = ["#4f8cff", "#34c759", "#ffb020", "#ff4d4f", "#b57bff", "#22c9c9"];
+  let drawVersion = 0;
 
   function describeDetection(d) {
     const state = d.class_name === "pedestrian_signal" ? d.extra?.signal_state : null;
@@ -43,12 +48,31 @@ window.GOverlay = (() => {
     return { x: (w - cw) / 2, y: (h - ch) / 2, w: cw, h: ch };
   }
 
+  // 이전 마스크의 비동기 표시 취소
+  /** 화면을 지우고 아직 디코딩 중인 마스크를 무효화한다. */
   function clear() {
+    drawVersion += 1;
     const { w, h } = fit();
     ctx.clearRect(0, 0, w, h);
   }
 
-  function draw(detections) {
+  // 최신 프레임의 추론 결과 표시
+  /** 박스를 그리거나 PNG 디코딩 후 최신 요청의 초록색·핑크색 마스크를 그린다. */
+  function draw(detections, event = {}) {
+    const version = ++drawVersion;
+    if (event.mask_png) {
+      const mask = new Image();
+      mask.onload = () => {
+        if (version !== drawVersion) return;
+        const { w, h } = fit();
+        const r = contentRect(w, h);
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(mask, r.x, r.y, r.w, r.h);
+      };
+      mask.onerror = () => { if (version === drawVersion) clear(); };
+      mask.src = `data:image/png;base64,${event.mask_png}`;
+      return;
+    }
     const { w, h } = fit();
     ctx.clearRect(0, 0, w, h);
     const r = contentRect(w, h);
