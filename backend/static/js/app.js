@@ -1,4 +1,7 @@
-// 화면 상태와 실시간 전송 루프
+/**
+ * file_path: backend/static/js/app.js
+ * 카메라 프레임 전송과 테스트 상태를 관리하고 검출·보행가능·횡단보도 결과를 표시한다.
+ */
 (() => {
   const $ = (id) => document.getElementById(id);
   const el = {
@@ -40,6 +43,8 @@
     el.mFps.textContent = state.recvTimes.length ? (state.recvTimes.length / 3).toFixed(1) : "–";
   }
 
+  // 검출 및 보행가능·횡단보도 영역 요약 표시
+  /** 결과 종류에 맞춰 검출 목록 또는 보행가능·횡단보도 영역 비율을 보여준다. */
   function showResult(res) {
     const dets = res.detections || [];
     el.resultRow.innerHTML = dets.length
@@ -49,6 +54,11 @@
       }).join("")
       : `<span class="muted">검출 없음 · frame ${res.frame_id}</span>`;
     const ev = res.event || {};
+    if (ev.type === "walking_warning" && Number.isFinite(ev.walkable_ratio)) {
+      const crosswalk = Number.isFinite(ev.crosswalk_ratio)
+        ? ` · 횡단보도(핑크) ${(ev.crosswalk_ratio * 100).toFixed(1)}%` : "";
+      el.resultRow.textContent = `보행가능(초록) ${(ev.walkable_ratio * 100).toFixed(1)}%${crosswalk} · frame ${res.frame_id}`;
+    }
     let text = "", tone = "";
     if (ev.type === "traffic_signal") {
       tone = ev.signal_state === "green" ? "green" : ev.signal_state === "red" ? "red" : "";
@@ -184,6 +194,11 @@
       const model = state.models.find((x) => x.id === body.model_id);
       el.runInfo.innerHTML = `<span>${MODE_LABEL[state.mode]}</span><span>${model ? model.name : body.model_id}</span><span>${body.device_type}</span>`;
       setBadge("running", "테스트 중");
+      try {
+        GRecorder.start();
+      } catch (recordError) {
+        showAlert(`실시간 녹화를 시작하지 못했습니다: ${recordError.message}`, "info");
+      }
       refreshButtons();
       window.scrollTo({ top: 0, behavior: "smooth" });
       loop();
@@ -205,6 +220,14 @@
     setLabel(el.btnStop, "종료 중…");
     setBadge("camera", "종료 중");
     try {
+      const recording = await GRecorder.stop();
+      if (recording) {
+        try {
+          await GApi.uploadRecording(state.sessionId, recording);
+        } catch (recordError) {
+          showAlert(`실시간 녹화 저장 실패: ${recordError.message}`);
+        }
+      }
       const r = await GApi.stopSession(state.sessionId);
       const s = r.session;
       el.sId.textContent = s.id;
@@ -257,7 +280,7 @@
         const rtt = performance.now() - t0;
         state.sent += 1;
         state.recvTimes.push(performance.now());
-        if (res.frame_id === frameId) { GOverlay.draw(res.detections); showResult(res); }
+        if (res.frame_id === frameId) { GOverlay.draw(res.detections, res.event); showResult(res); }
         updateMetrics(res.timing, rtt);
         if (!res.saved) setStatus(el.storageStatus, "warn", "저장 꺼짐"); else setStatus(el.storageStatus, "ok", "저장");
         setStatus(el.serverStatus, "ok", "서버");

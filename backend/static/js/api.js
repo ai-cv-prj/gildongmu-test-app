@@ -1,4 +1,7 @@
-// 서버 API 호출 래퍼
+/**
+ * file_path: backend/static/js/api.js
+ * 프레임과 실시간 탐지 녹화 영상을 서버로 전송한다.
+ */
 window.GApi = (() => {
   const BASE = "/api";
 
@@ -51,6 +54,13 @@ window.GApi = (() => {
       fd.append("captured_at_ms", String(capturedAtMs));
       fd.append("client_sent_at_ms", String(Date.now()));
       return request(`/sessions/${encodeURIComponent(id)}/frames`, { method: "POST", body: fd }, timeoutMs);
+    },
+    // 실시간 탐지 영상 업로드
+    /** 완성된 WebM 녹화 파일을 실행 중인 세션에 저장한다. */
+    uploadRecording(id, blob) {
+      const fd = new FormData();
+      fd.append("video", blob, "realtime_overlay.webm");
+      return request(`/sessions/${encodeURIComponent(id)}/recording`, { method: "POST", body: fd }, 120000);
     },
   };
 })();
