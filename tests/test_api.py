@@ -83,6 +83,30 @@ def test_reject_frame_after_stop(client: TestClient):
     assert upload(client, "no-such-session", 1, make_jpeg()).status_code == 404
 
 
+def test_recording_timings_and_generated_video_coexist(client: TestClient, settings: Settings):
+    """실시간 녹화·지연 로그를 저장한 세션도 종료 후 결과 영상을 만든다."""
+    sid = start(client)
+    assert upload(client, sid, 1, make_jpeg()).status_code == 200
+    recording = b"test-recording-upload"
+    response = client.post(f"/api/sessions/{sid}/recording",
+                           files={"video": ("recording.webm", recording, "video/webm")})
+    assert response.status_code == 200, response.text
+    batch = {"batch_id": "integration-1", "records": [{
+        "frame_id": 1, "captured_at_ms": 1001, "capture_started_ms": 1,
+        "capture_ms": 5, "jpeg_bytes": 100, "recording_active": True,
+        "visibility": "visible", "status": "ok",
+    }]}
+    assert client.post(f"/api/sessions/{sid}/client-timings", json=batch).status_code == 200
+    assert client.post(f"/api/sessions/{sid}/stop").status_code == 200
+    detail = client.get(f"/api/sessions/{sid}").json()
+    assert detail["status"] == "completed" and detail["video_status"] == "ready"
+    assert client.get(f"/api/sessions/{sid}/video").status_code == 200
+    directory = settings.sessions_dir / sid
+    assert (directory / "realtime_overlay.webm").read_bytes() == recording
+    logs = (directory / "client_timings.jsonl").read_text().splitlines()
+    assert len(logs) == 1 and json.loads(logs[0])["frame_id"] == 1
+
+
 def test_second_session_conflict_409(client: TestClient):
     sid = start(client)
     r = client.post("/api/sessions", json={"mode": "bus", "model_id": "bus-mock-v1", "device_type": "x"})

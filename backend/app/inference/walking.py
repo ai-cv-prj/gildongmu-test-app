@@ -1,63 +1,136 @@
-"""도보 장애물 실제 모델 파이프라인. 도보 장애물 담당자가 수정하는 파일이다.
+"""
+file_path: backend/app/inference/walking.py
 
-가중치 파일은 backend/models/walking/ 폴더에 넣는다. 확장자가 .pt .pth .onnx .engine 인 파일은
-자동으로 UI 모델 목록에 뜬다. 여러 개를 넣으면 각각 선택지가 되어 가중치별 비교 테스트를 할 수 있다.
+3클래스 Mask2Former로 휴대폰 프레임의 보행가능 영역과 횡단보도를 추론한다.
+test_video_inference.py와 같이 보행가능은 초록색, 횡단보도는 핑크색으로 표시한다.
+보행불가능 영역은 투명하게 두어 원본 영상이 보이도록 한다.
 
-수정할 곳은 세 군데다.
-1. CLASS_NAMES : 클래스 ID와 이름 표
-2. load()      : self.weights 경로의 가중치를 읽어 self.model 에 넣는다 (세션 시작 시 한 번만 호출)
-3. infer()     : OpenCV BGR 이미지 한 장을 추론해 아래 형식으로 돌려준다
-
-점검: .venv/bin/python scripts/check_model.py --mode walking --image 사진.jpg
+모델 폴더: backend/models/walking/model/
+필요 파일: config.json, preprocessor_config.json, model.safetensors
+실행 패키지: torch==2.14.0, torchvision==0.29.0, transformers==5.17.0,
+scipy==1.18.1, pillow==12.3.0 (앱의 .venv에 설치)
 """
 from __future__ import annotations
 
+import base64
+import logging
 from typing import Any
 
+import cv2
 import numpy as np
 
-from .base import InferenceContext, ModelSpec, normalize_box  # noqa: F401
+from .base import InferenceContext, ModelSpec
 
-CLASS_NAMES: dict[int, str] = {
-    # 0: "example_class",
+log = logging.getLogger(__name__)
+LABEL_COLORS = {
+    "walkable": (0, 255, 0),
+    "crosswalk": (180, 105, 255),  # 참고 파일과 동일한 OpenCV BGR 순서
 }
 
 
+# 저장된 모델의 3클래스 라벨 확인
+def get_segmentation_label_ids(model) -> dict[str, int]:
+    """보행불가능·보행가능·횡단보도 세 클래스인지 확인하고 라벨 번호를 반환한다."""
+    label_ids = {name: int(label_id) for label_id, name in model.config.id2label.items()}
+    required = {"non_walkable", "walkable", "crosswalk"}
+    if len(model.config.id2label) != 3 or set(label_ids) != required:
+        raise ValueError("non_walkable, walkable, crosswalk 세 클래스의 가중치가 필요합니다.")
+    return label_ids
+
+
+# 보행가능 영역과 횡단보도를 휴대폰 표시용 데이터로 변환
+def make_segmentation_event(class_map: np.ndarray, label_ids: dict[str, int]) -> dict[str, Any]:
+    """픽셀을 바꾸지 않는 RLE 마스크를 만들고 복잡한 마스크만 PNG로 반환한다."""
+    if class_map.ndim != 2 or not class_map.size:
+        raise ValueError("마스크는 비어 있지 않은 2차원 배열이어야 합니다.")
+    # 전송용 번호는 모델 라벨 순서와 무관하게 투명=0, 초록=1, 핑크=2다.
+    labels = np.zeros(class_map.shape, dtype=np.uint8)
+    ratios = {}
+    for code, name in enumerate(LABEL_COLORS, start=1):
+        mask = class_map == label_ids[name]
+        labels[mask] = code
+        ratios[f"{name}_ratio"] = float(mask.mean())
+    event = {
+        "type": "walking_warning",
+        "warning": False,  # 영역 분할만 수행하며 장애물 위험 여부는 판단하지 않는다.
+        "warning_text": "",
+        **ratios,
+    }
+    flat = labels.reshape(-1)
+    starts = np.r_[0, np.flatnonzero(flat[1:] != flat[:-1]) + 1]
+    # 같은 색이 이어지는 길이와 색 번호를 little-endian uint32 한 개에 담는다.
+    # 지나치게 많은 구간은 브라우저 루프·응답 크기를 늘리므로 PNG로 보낸다.
+    if starts.size <= 4096 and flat.size <= 4194304:
+        lengths = np.diff(np.r_[starts, flat.size]).astype(np.uint32)
+        runs = ((lengths << 2) | flat[starts]).astype("<u4")
+        event["mask_rle"] = {
+            "width": int(labels.shape[1]), "height": int(labels.shape[0]),
+            "data": base64.b64encode(runs.tobytes()).decode("ascii"),
+        }
+    else:
+        palette = np.array([(0, 0, 0, 0), *[(*color, 140) for color in LABEL_COLORS.values()]], dtype=np.uint8)
+        ok, encoded = cv2.imencode(".png", palette[labels])
+        if not ok:
+            raise RuntimeError("보행가능·횡단보도 영역 PNG를 생성하지 못했습니다.")
+        event["mask_png"] = base64.b64encode(encoded.tobytes()).decode("ascii")
+    return event
+
+
 class WalkingPipeline:
+    """앱의 세션 인터페이스에 맞춰 3클래스 모델을 한 번 로딩하고 재사용한다."""
+
     mode = "walking"
 
+    # 선택한 가중치와 모델 상태 초기화
     def __init__(self, spec: ModelSpec) -> None:
+        """화면에서 선택한 가중치 경로를 보관한다."""
         self.spec = spec
-        self.weights = spec.weights  # 선택된 가중치 파일 경로 (pathlib.Path)
+        self.weights = spec.weights
+        self.processor = None
         self.model = None
+        self.device = None
+        self.label_ids: dict[str, int] = {}
 
+    # 첫 테스트 시작 시 모델 로딩
     def load(self) -> None:
-        # 예 (ultralytics):
-        #   from ultralytics import YOLO
-        #   self.model = YOLO(str(self.weights))
-        raise NotImplementedError("backend/app/inference/walking.py 의 load() 에 모델 로딩 코드를 넣어주세요")
+        """선택된 로컬 모델을 읽고 CUDA가 사용 가능하면 GPU에 올린다."""
+        # 선택적 패키지는 실제 모델을 사용할 때만 불러온다.
+        import torch
+        from transformers import AutoImageProcessor, Mask2FormerForUniversalSegmentation
 
+        if self.weights is None or self.weights.name != "model.safetensors":
+            raise ValueError("Mask2Former 모델 폴더의 model.safetensors를 선택해 주세요.")
+        model_dir = self.weights.parent
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        processor = AutoImageProcessor.from_pretrained(model_dir, local_files_only=True, backend="pil")
+        model = Mask2FormerForUniversalSegmentation.from_pretrained(model_dir, local_files_only=True)
+        self.label_ids = get_segmentation_label_ids(model)
+        self.model = model.to(self.device).eval()
+        self.processor = processor
+        log.info("walking model loaded: %s, device=%s", model_dir, self.device)
+
+    # 테스트 시작 시 세션 상태 초기화
     def reset_session(self, session_id: str) -> None:
-        """테스트 시작 시 호출. 추적기나 N프레임 누적 상태가 있으면 여기서 초기화한다."""
+        """프레임 사이의 누적 상태가 없는 모델이므로 별도 초기화하지 않는다."""
 
+    # 테스트 종료 시 세션 정리
     def close_session(self, session_id: str) -> None:
-        """테스트 종료 시 호출."""
+        """다음 테스트에서 재사용할 수 있도록 로딩된 모델을 유지한다."""
 
+    # 휴대폰 프레임 한 장 추론
     def infer(self, frame_bgr: np.ndarray, context: InferenceContext) -> dict[str, Any]:
-        h, w = frame_bgr.shape[:2]
-        detections: list[dict[str, Any]] = []
-        # 예 (ultralytics):
-        #   result = self.model.predict(frame_bgr, conf=context.confidence, verbose=False)[0]
-        #   for b in result.boxes:
-        #       x1, y1, x2, y2 = b.xyxy[0].tolist()
-        #       cid = int(b.cls[0])
-        #       detections.append({
-        #           "class_id": cid,
-        #           "class_name": CLASS_NAMES.get(cid, result.names.get(cid, str(cid))),
-        #           "confidence": float(b.conf[0]),
-        #           "box": normalize_box(x1, y1, x2, y2, w, h),   # 픽셀 → 0~1 좌표
-        #           "track_id": None,
-        #           "extra": {},
-        #       })
-        raise NotImplementedError("backend/app/inference/walking.py 의 infer() 에 추론 코드를 넣어주세요")
-        return {"detections": detections, "event": {"type": "walking_warning", "warning": False, "warning_text": ""}}
+        """BGR 프레임을 분할하고 원본 크기의 초록색·핑크색 마스크를 JSON으로 반환한다."""
+        import torch
+
+        if self.model is None or self.processor is None:
+            raise RuntimeError("load()로 모델을 먼저 불러와야 합니다.")
+        rgb_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        inputs = self.processor(images=rgb_frame, return_tensors="pt")
+        inputs = {name: value.to(self.device) for name, value in inputs.items()}
+        with torch.inference_mode():
+            outputs = self.model(**inputs)
+            # 의미 분할은 각 픽셀의 최상위 클래스를 사용한다. 박스 신뢰도 기준은 적용하지 않는다.
+            class_map = self.processor.post_process_semantic_segmentation(
+                outputs, target_sizes=[frame_bgr.shape[:2]],
+            )[0].cpu().numpy()
+        return {"detections": [], "event": make_segmentation_event(class_map, self.label_ids)}

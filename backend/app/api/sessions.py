@@ -1,13 +1,21 @@
+"""
+file_path: backend/app/api/sessions.py
+
+세션의 프레임 처리, 실시간 녹화 업로드와 종료 API를 제공한다.
+"""
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
-from ..schemas import FrameResponse, SessionCreate, SessionCreated, SessionDetail, SessionList, StopResponse
+from pydantic import ValidationError
+
+from ..schemas import ClientTimingBatch, FrameResponse, SessionCreate, SessionCreated, SessionDetail, SessionList, StopResponse
 from ..services.session_service import SessionError, SessionService
+from ..services.storage_service import StorageError
 from .deps import get_service
 
 router = APIRouter()
@@ -37,6 +45,68 @@ async def upload_frame(
         svc.process_frame, session_id, data, image.content_type or "", frame_id, captured_at_ms, client_sent_at_ms
     )
     return FrameResponse(**result)
+
+
+# 폰에서 측정한 지연 로그 저장
+@router.post("/sessions/{session_id}/client-timings")
+async def upload_client_timings(
+    session_id: str,
+    request: Request,
+    svc: SessionService = Depends(get_service),
+) -> dict:
+    """최대 25개 측정값을 저장하며 종료 직후 도착하는 로그도 허용한다."""
+    svc.get(session_id)  # 존재 및 경로 검증; 종료된 세션에도 마지막 로그를 남긴다.
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > 64 * 1024:
+            raise SessionError(413, "timings_too_large", "지연 로그는 요청당 64KB 이하여야 합니다")
+        data.extend(chunk)
+    try:
+        batch = ClientTimingBatch.model_validate_json(data)
+    except ValidationError as exc:
+        raise SessionError(422, "invalid_timings", "지연 로그 형식이 올바르지 않습니다") from exc
+    records = [
+        {"schema_version": 1, "session_id": session_id, "batch_id": batch.batch_id,
+         "dropped_records": batch.dropped_records, **row.model_dump()}
+        for row in batch.records
+    ]
+    try:
+        await run_in_threadpool(svc.storage.append_client_timings, session_id, records)
+    except StorageError as exc:
+        raise SessionError(507, "storage_failed", str(exc)) from exc
+    return {"session_id": session_id, "saved_count": len(records)}
+
+
+# 실행 중인 세션의 실시간 탐지 영상 저장
+@router.post("/sessions/{session_id}/recording")
+async def upload_recording(
+    session_id: str,
+    video: UploadFile = File(...),
+    svc: SessionService = Depends(get_service),
+) -> dict:
+    """
+    휴대폰에서 녹화된 WebM 영상을 현재 세션 폴더에 저장한다.
+    """
+    session = svc.get(session_id)
+    if session["status"] != "running":
+        raise SessionError(409, "session_not_running", "실행 중인 세션만 녹화를 저장할 수 있습니다")
+
+    content_type = (video.content_type or "").lower()
+    if not (content_type.startswith("video/webm") or content_type == "application/octet-stream"):
+        raise SessionError(415, "invalid_video_type", "WebM 영상만 저장할 수 있습니다")
+
+    limit = 250 * 1024 * 1024
+    data = await video.read(limit + 1)
+    if len(data) > limit:
+        raise SessionError(413, "video_too_large", "녹화 영상은 250MB 이하여야 합니다")
+    if not data:
+        raise SessionError(400, "empty_video", "녹화 영상이 비어 있습니다")
+
+    try:
+        path = await run_in_threadpool(svc.storage.save_recording, session_id, data)
+    except StorageError as exc:
+        raise SessionError(507, "storage_failed", str(exc)) from exc
+    return {"session_id": session_id, "recording_path": path, "size_bytes": len(data)}
 
 
 @router.post("/sessions/{session_id}/stop", response_model=StopResponse)

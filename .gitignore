@@ -11,3 +11,5 @@ node_modules/
 screenshots/
 check_output/
 workbench/
+.agents/
+AGENTS.md

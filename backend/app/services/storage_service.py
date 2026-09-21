@@ -1,9 +1,14 @@
-"""세션 파일 저장: frames/*.jpg, results.jsonl, manifest.json."""
+"""
+file_path: backend/app/services/storage_service.py
+
+세션의 원본 프레임, 추론 결과, 요약과 실시간 탐지 영상을 저장한다.
+"""
 from __future__ import annotations
 
 import json
 import os
 import shutil
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +21,7 @@ class SessionStorage:
     def __init__(self, sessions_dir: Path, save_frames: bool) -> None:
         self.sessions_dir = sessions_dir
         self.save_frames = save_frames
+        self._client_log_lock = threading.Lock()
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- 디스크 ----
@@ -113,6 +119,22 @@ class SessionStorage:
             raise StorageError(f"cannot save frame: {exc}") from exc
         return rel
 
+    # 실시간 탐지 녹화 영상 저장
+    def save_recording(self, session_id: str, video_bytes: bytes) -> str:
+        """
+        카메라와 탐지 오버레이가 합성된 WebM 영상을 세션 폴더에 저장한다.
+        """
+        rel = "realtime_overlay.webm"
+        path = self.session_dir(session_id) / rel
+        try:
+            with open(path, "wb") as file:
+                file.write(video_bytes)
+                file.flush()
+                os.fsync(file.fileno())
+        except OSError as exc:
+            raise StorageError(f"cannot save recording: {exc}") from exc
+        return rel
+
     def append_result(self, session_id: str, record: dict[str, Any]) -> None:
         path = self.session_dir(session_id) / "results.jsonl"
         try:
@@ -121,6 +143,18 @@ class SessionStorage:
                 f.flush()
         except OSError as exc:
             raise StorageError(f"cannot append result: {exc}") from exc
+
+    # 클라이언트 지연 로그 일괄 저장
+    def append_client_timings(self, session_id: str, records: list[dict[str, Any]]) -> None:
+        """기존 세션 폴더에 프레임별 측정값을 JSONL로 덧붙인다."""
+        path = self.session_dir(session_id) / "client_timings.jsonl"
+        lines = "".join(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n" for row in records)
+        try:
+            with self._client_log_lock, open(path, "a", encoding="utf-8") as file:
+                file.write(lines)
+                file.flush()
+        except OSError as exc:
+            raise StorageError(f"cannot append client timings: {exc}") from exc
 
     def read_results(self, session_id: str, after_frame_id: int, limit: int) -> list[dict[str, Any]]:
         path = self.session_dir(session_id) / "results.jsonl"
