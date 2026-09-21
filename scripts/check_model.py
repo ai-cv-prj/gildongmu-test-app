@@ -64,13 +64,23 @@ def validate(result: object, mode: str) -> list[str]:
 
 
 def detection_style(d: dict) -> tuple[str, tuple[int, int, int]]:
+    if d.get("class_name") == "crosswalk":
+        from backend.app.services.video_service import crosswalk_style
+
+        return crosswalk_style(d)
     if d.get("class_name") == "pedestrian_signal":
         extra = d.get("extra") or {}
+        selection = extra.get("selection_status")
+        if selection in {"unselected", "candidate"}:
+            color = (32, 176, 255) if selection == "candidate" else (255, 140, 79)
+            return f"{selection.upper()} det {d['confidence']:.2f}", color
         state = extra.get("signal_state")
         colors = {"red": (59, 57, 229), "green": (74, 168, 31), "unknown": (136, 136, 136)}
         if state in colors:
             score = extra.get("color_confidence")
             label = state.upper()
+            if selection == "selected":
+                label = f"TARGET {label}"
             if state != "unknown" and isinstance(score, (int, float)):
                 label += f" {score * 100:.1f}%"
             return label, colors[state]
@@ -80,7 +90,7 @@ def detection_style(d: dict) -> tuple[str, tuple[int, int, int]]:
 def draw(frame: np.ndarray, result: dict) -> np.ndarray:
     out = frame.copy()
     h, w = out.shape[:2]
-    for d in result.get("detections", []):
+    for d in sorted(result.get("detections", []), key=lambda d: d["class_name"] != "crosswalk"):
         b = d["box"]
         p1, p2 = (int(b["x1"] * w), int(b["y1"] * h)), (int(b["x2"] * w), int(b["y2"] * h))
         label, color = detection_style(d)
@@ -94,7 +104,7 @@ def main() -> int:
     ap.add_argument("--mode", choices=list(EVENT_TYPES))
     ap.add_argument("--image", type=Path)
     ap.add_argument("--model", help="모델 ID. 생략하면 해당 기능의 첫 번째 실제 가중치 (없으면 mock)")
-    ap.add_argument("--conf", type=float, default=0.4)
+    ap.add_argument("--conf", type=float, default=None)
     ap.add_argument("--list", action="store_true", help="인식된 모델 목록만 출력")
     args = ap.parse_args()
 
@@ -105,6 +115,7 @@ def main() -> int:
         return 0
     if not args.mode or not args.image:
         ap.error("--mode 와 --image 가 필요합니다")
+    confidence = args.conf if args.conf is not None else (0.25 if args.mode == "traffic" else 0.4)
 
     frame = cv2.imread(str(args.image))
     if frame is None:
@@ -133,7 +144,7 @@ def main() -> int:
     for i in range(1, 6):
         t = time.perf_counter()
         try:
-            result = pipe.infer(frame, InferenceContext(session_id="check", frame_id=i, captured_at_ms=0, confidence=args.conf))
+            result = pipe.infer(frame, InferenceContext(session_id="check", frame_id=i, captured_at_ms=0, confidence=confidence))
         except Exception as exc:  # noqa: BLE001
             print(f"[실패] infer(): {type(exc).__name__}: {exc}")
             return 1

@@ -7,7 +7,7 @@ Gildongmu 모델을 **휴대폰 카메라로 실시간 테스트**하는 팀 내
 - 테스트 시작부터 종료까지 전송된 모든 프레임과 추론 결과가 **본인 PC의 폴더에 자동 저장**됩니다.
 - 모델이 없어도 Mock(가짜 박스) 모델로 전체 흐름을 먼저 확인할 수 있습니다.
 
-저장소에는 뼈대만 들어 있습니다. **모델 가중치와 추론 코드는 각자 본인 PC에서 넣습니다.**
+신호등 검출·선택·추적·색상 분류 코드가 포함되어 있습니다. **모델 가중치는 각자 본인 PC에 넣습니다.** 도보 장애물과 버스 추론은 기능별 파이프라인에 구현합니다.
 
 ```text
  본인 휴대폰                         본인 PC (GPU)
@@ -124,6 +124,32 @@ https://random-words-here.trycloudflare.com
 6. **테스트 종료**를 누르면 저장된 프레임 수와 폴더 위치가 화면에 나옵니다.
 
 테스트 중에는 기능과 모델을 바꿀 수 없습니다. 바꾸려면 종료한 뒤 다시 시작합니다. 화면을 끄거나 다른 앱으로 넘어가면 전송이 일시정지되고, 돌아오면 이어집니다.
+
+신호등 실제 모델은 검출한 신호등을 모두 표시합니다. 파란 박스는 미선택 신호등, 노란 박스는 선택 확인 중인 후보이며, 최종 안내 대상은 굵은 박스와 `안내 대상` 문구로 구분합니다. 색상 판별은 최종 선택 대상에만 적용합니다. `신호등 2개 검출 · 안내 대상 선택 불가`는 검출에는 성공했지만 안내할 대상을 정하지 못했다는 뜻입니다.
+
+선택 흐름·설정값·검증 결과·남은 한계는 [신호등 모듈 문서](docs/traffic-signal.md)에 정리했습니다.
+
+새 테스트의 `results.jsonl`에는 모든 신호등 박스와 `extra.selection_status`(`unselected` / `candidate` / `selected`)가 저장됩니다. `event.selected_detection_index`와 `candidate_detection_index`는 해당 프레임의 `detections` 목록을 가리키며, 대상이 없으면 `null`입니다. 기존 기록에 저장되지 않은 박스는 원본 프레임을 다시 추론해야 확인할 수 있습니다.
+
+횡단보도는 보라색 bbox와 검출 신뢰도로 표시합니다. 해당 프레임의 연결 판단에 사용된 박스는 청록색이며, 사용됐다는 표시만으로 신호등 연결이 성공했다는 뜻은 아닙니다. 연결 신뢰도 기준(0.50) 미달 후보와 위치 조건 탈락 박스도 화면에 남기고 사유를 표시합니다. 표시되는 후보는 모델이 앱의 검출 신뢰도 기준(기본 0.25)으로 반환한 범위입니다. 모델 단계에서 제거된 후보까지 표시하지는 않습니다. 화면 하단에서 미검출, 신뢰도 미달, 위치 탈락, 횡단보도 선택 모호, 방향 확인 불가, 신호등 연결 실패·확인 중을 구분할 수 있습니다. 단일 신호등 판별이나 기존 대상 추적 중에는 그 상태를 따로 표시합니다.
+
+횡단보도 박스는 `detections`의 신호등 목록 뒤에 `class_name="crosswalk"`로 저장하므로 신호등 선택 인덱스는 유지됩니다. `extra.crosswalk_status`는 `below_confidence` / `position_rejected` / `eligible` / `used`, `exclusion_reasons`는 `below_confidence` / `bottom_too_high` / `off_center` 사유 목록입니다. `event.crosswalk_diagnostics`에는 검출·연결 상태와 사용된 횡단보도의 `detections` 인덱스가 저장됩니다. `crosswalk_candidate_count`는 표시 후보 수이며, 기존 `detected_crosswalk_count`는 0.50 이상 후보 수를 유지합니다. 신호등 개수는 전체 박스 수가 아니라 `detected_signal_count`를 사용합니다.
+
+선택한 신호등이 다음 프레임에서도 비슷한 위치와 크기로 검출되면 같은 대상으로 추적합니다. 여러 신호등이 보이면 추적 중에도 횡단보도 연결을 다시 검사합니다. 신호등이 1개에서 2개로 늘어나거나 검출 신뢰도 순서가 바뀌어도, 이전 대상과의 박스 겹침·중심 이동·크기를 우선 비교합니다. 초기 추적 기준은 IoU 0.20 이상, 중심 이동은 이전 박스 대각선의 0.50 이하, 가로·세로·면적 변화는 각각 2배 이내이며, 상위 두 후보의 점수 차이가 0.15 미만이면 유지하지 않습니다. 점수는 `IoU - 0.25 × 중심 이동 비율`입니다. 현재 프레임에서 검출된 대상만 추적하며 최종 선택된 대상의 색상은 매번 새로 분류합니다.
+
+화면 흔들림은 이전·현재 영상의 특징점 이동으로 보정합니다. 왕복 광류 검사와 RANSAC을 통과한 점이 화면 여러 영역에 분포하고 충분히 일치할 때만, 이전 신호등·횡단보도 박스를 현재 화면 위치로 옮겨 비교합니다. 보정이 불확실하면 기존 좌표 비교를 사용합니다. 이 보정은 추적 대상 유지와 연속 후보 확인 모두에 적용되며, 사라진 검출이나 과거 색상을 복원하지 않습니다. `event.tracking.camera_motion`에 보정 여부·실패 사유·일치점 수가 기록됩니다.
+
+처음부터 여러 신호등이 보이거나 추적하던 대상을 놓치면 기존 선택 절차를 사용합니다. 여러 개일 때는 횡단보도 방향 추정과 연속 3프레임 확인을 적용하고, 하나일 때는 기존처럼 바로 판별하되 이전 대상과 일치하지 않으면 새 대상 번호를 부여합니다. 프레임 번호 누락·역순, 촬영 시각 역순·1초 초과 간격, 해상도 변경 시에는 추적 및 후보 상태를 초기화하고 최초 선택 절차부터 시작합니다. 횡단보도 신뢰도 기준은 0.50입니다.
+
+방향 추정은 횡단보도 bbox 안의 밝고 긴 도색 줄무늬를 추출하고, 반복되는 줄무늬 끝점으로 경계선을 맞춥니다. 각 경계선은 최소 3개 줄무늬의 지지가 필요하며, 화면이나 bbox에 잘린 끝점은 제외합니다. 두 경계선의 교점이 불안정하거나 비슷한 근거의 서로 다른 방향이 나오면 선택을 확정하지 않습니다. 가림·그림자·희미한 도색에서 여전히 실패할 수 있는 영상 기반 휴리스틱이며, 사용자가 건널 횡단보도나 정답 신호등을 보장하지 않습니다.
+
+다른 신호등이 횡단보도 연결 후보가 되면 즉시 기존 색상 출력을 보류하고, 같은 신호등과 횡단보도를 3프레임 연속 확인한 뒤 새 `track_id`로 변경합니다(`target_switched`). 확인 중에는 `waiting_for_target_switch`와 후보 박스를 표시하며 최종 상태는 `unknown`입니다. 방향 후보가 모호하거나 현재 방향에 맞는 신호등이 없을 때도 색상을 보류합니다. 충돌이 발생한 뒤에는 방향 추정 실패나 단일 검출로 돌아갔다는 이유만으로 기존 색상을 복구하지 않습니다. 기존 대상이 다시 3프레임 연속 연결되면 같은 `track_id`로 복구합니다(`target_revalidated`). 후보나 횡단보도가 바뀌거나 연결이 끊기면 연속 확인을 다시 시작합니다.
+
+횡단보도 미검출·방향 계산 실패만 발생했고 아직 연결 충돌이 없으면 현재 보이는 기존 대상을 유지합니다. 이는 구간 연결이 검증됐다는 뜻은 아닙니다. 최초 단일 신호등 즉시 선택, 일자형 다구간 횡단보도의 구분 한계는 남아 있습니다. `event.tracking.revalidation_status/revalidation_reason`에 재검사 결과, `target_change`에 변경 확인 상태·이전 대상 번호·후보 인덱스·연속 확인 수를 기록합니다.
+
+유지된 대상은 `event.association_status="tracked"`, `association_reason="previous_target_retained"`로 기록합니다. 선택된 박스의 `track_id`는 해당 세션 안에서 유지되는 대상 번호이고 미선택 박스는 `null`입니다. `event.selection_origin`은 선택 근거(`single_signal` / `crosswalk_matched`)이며, 3프레임 재확인에 성공한 기존 대상도 `crosswalk_matched`로 갱신됩니다. `event.tracking`은 연결 여부와 겹침·이동량을 기록합니다. 단일 신호등에서 시작한 추적은 횡단보도와의 연결이 검증됐다는 뜻이 아닙니다.
+
+
 
 ### 화면에 나오는 숫자
 
@@ -288,7 +314,7 @@ class TrafficPipeline:
 | 좌표는 **0~1 정규화 xyxy** | 픽셀 좌표는 `normalize_box(x1, y1, x2, y2, w, h)` 로 변환합니다. xywh 나 중심 좌표 형식이면 먼저 xyxy 로 바꾸세요. |
 | 값은 **파이썬 기본 타입** | tensor 나 numpy 값은 `float()`, `int()` 로 변환합니다. 안 하면 저장 단계에서 오류가 납니다. |
 | `load()` 에서만 모델 로딩 | `infer()` 안에서 매번 로딩하면 프레임마다 몇 초씩 걸립니다. |
-| 신뢰도 기준은 `context.confidence` | 화면 기본값은 0.4 입니다. |
+| 신뢰도 기준은 `context.confidence` | 기본값은 신호등 0.25, 나머지 기능 0.4 입니다. |
 
 기능별 `event` 형식:
 
@@ -377,7 +403,7 @@ backend/data/sessions/
 .venv/bin/python scripts/visualize_session.py backend/data/sessions/20260918_*_traffic --combine backend/data/sessions/20260918_results.mp4
 ```
 
-화면에 그리는 박스는 `results.jsonl`의 `detections` 목록입니다. 신호등 모델의 `detected_crosswalk_count`는 감지 개수만 기록하므로 횡단보도 박스는 표시되지 않습니다.
+화면에 그리는 박스는 `results.jsonl`의 `detections` 목록입니다. 새 신호등 테스트 결과에는 횡단보도 박스·신뢰도·실패 사유도 저장되어 내보낸 영상에 표시됩니다. 횡단보도 개수만 저장한 과거 기록은 원본 이미지를 재추론해야 횡단보도 박스를 볼 수 있습니다.
 
 결과 파일 읽기 예시:
 
@@ -441,7 +467,7 @@ print(len(ok), "frames,", sum(r["timing"]["inference_ms"] for r in ok) / len(ok)
 | `MAX_UPLOAD_BYTES` | 2097152 | 프레임 한 장 업로드 한도 |
 | `MIN_FREE_DISK_GB` | 2 | 여유 공간이 이보다 적으면 새 테스트를 막음 |
 
-전송 빈도(5 FPS), 해상도(960px), JPEG 품질(0.8), 요청 제한 시간(5초), 신뢰도 기준(0.4)은 `backend/static/js/app.js` 맨 위 `SETTINGS` 에 있습니다.
+전송 빈도(5 FPS), 이미지 최대 변 길이(960px), JPEG 품질(0.8), 요청 제한 시간(5초), 기본 신뢰도 기준(0.4)은 `backend/static/js/app.js` 맨 위 `SETTINGS` 에 있습니다. 신호등 모드는 신뢰도 기본값을 0.25로 적용합니다. JPEG 0.8은 인코더 품질 값이며 파일 크기를 80% 또는 0.8%로 고정하는 압축률이 아닙니다.
 
 ### 코드 구조
 
@@ -452,13 +478,18 @@ backend/app/inference/
   ├─ base.py                         파이프라인 인터페이스, normalize_box
   ├─ registry.py                     가중치 폴더 탐색, 모델 1회 로딩
   ├─ mock.py                         가짜 박스 모델
-  └─ traffic.py / walking.py / bus.py   ← 팀원이 수정하는 파일
+  ├─ traffic.py                       신호등 선택·추적·대상 변경·색상 분류
+  ├─ traffic_geometry.py              횡단보도 줄무늬 기반 방향 추정
+  ├─ traffic_motion.py                카메라 이동 추정과 박스 좌표 보정
+  └─ walking.py / bus.py              도보 장애물·버스 파이프라인
 backend/app/services/                session_service(세션·프레임 처리), storage_service(폴더·파일 저장)
 backend/static/                      index.html, css/app.css, js/(api, camera, overlay, app)
 backend/models/<기능>/               가중치 (Git 제외)
 backend/data/sessions/               테스트 기록 (Git 제외)
 scripts/                             run.sh, tunnel.sh, check_model.py, screenshot.py
 tests/test_api.py                    API 테스트
+tests/test_traffic_*.py              신호등 기본값·방향·흔들림·선택 회귀 테스트
+docs/traffic-signal.md               신호등 동작·검증 결과·한계
 ```
 
 ### 테스트
@@ -467,4 +498,4 @@ tests/test_api.py                    API 테스트
 .venv/bin/python -m pytest tests -q
 ```
 
-업로드 거부, 세션 충돌, 저장 개수 일치, 비정상 종료 복구, 저장 실패 처리, 가중치 자동 인식을 검사합니다. 공통 코드를 고쳤다면 push 전에 돌려 주세요.
+업로드 거부, 세션 충돌, 저장 개수 일치, 비정상 종료 복구, 저장 실패 처리, 가중치 자동 인식과 신호등 선택·추적·대상 변경을 검사합니다. 공통 코드를 고쳤다면 push 전에 돌려 주세요.

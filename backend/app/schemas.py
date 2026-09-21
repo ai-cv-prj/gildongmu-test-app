@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 Mode = Literal["traffic", "walking", "bus"]
 SessionStatus = Literal["running", "completed", "aborted", "failed"]
@@ -52,6 +52,12 @@ class SessionCreate(BaseModel):
     note: str = Field(default="", max_length=500)
     settings: SessionSettings = SessionSettings()
     client: ClientInfo = ClientInfo()
+
+    @model_validator(mode="after")
+    def traffic_confidence_default(self) -> "SessionCreate":
+        if self.mode == "traffic" and "confidence" not in self.settings.model_fields_set:
+            self.settings.confidence = 0.25
+        return self
 
 
 class SessionCreated(BaseModel):
