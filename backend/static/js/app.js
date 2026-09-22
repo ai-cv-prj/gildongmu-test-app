@@ -1,5 +1,5 @@
 /**
- * file_path: backend/static/js/app.js
+ * 파일 경로: backend/static/js/app.js
  * 카메라 프레임 전송과 테스트 상태를 관리하고 검출·보행가능·횡단보도 결과를 표시한다.
  */
 (() => {
@@ -11,6 +11,9 @@
     setup: $("setup-panel"), runInfo: $("run-info"), cameraCard: document.querySelector(".camera-card"), modeSeg: $("mode-seg"), modelSelect: $("model-select"), modelHint: $("model-hint"),
     deviceSelect: $("device-select"), deviceCustom: $("device-custom"), note: $("note"),
     btnCamera: $("btn-camera"), btnStart: $("btn-start"), btnStop: $("btn-stop"),
+    guidancePanel: $("guidance-panel"), guidanceText: $("guidance-text"),
+    ttsStatus: $("tts-status"), btnSoundCheck: $("btn-sound-check"),
+    btnMute: $("btn-mute"),
     summary: $("summary"), sId: $("s-id"), sFrames: $("s-frames"), sAvg: $("s-avg"), sPath: $("s-path"),
     alert: $("alert"),
   };
@@ -22,9 +25,23 @@
 
   const state = {
     mode: "traffic", models: [], cameraOn: false, sessionId: null, running: false,
-    frameId: 0, sent: 0, failed: 0, recvTimes: [], stopping: false,
+    frameId: 0, sent: 0, failed: 0, recvTimes: [], starting: false, stopping: false,
     timings: null, loopTask: null, logWarning: "",
+    voiceEnabled: true,
   };
+
+  const player = GTts.create({
+    onError: (message) => guidance.stop(message),
+    onStatus: (message) => { el.ttsStatus.textContent = message; },
+  });
+  const guidance = GGuidance.create({
+    player,
+    onChange: ({ text }) => {
+      el.guidanceText.textContent = text;
+      refreshButtons();
+    },
+  });
+  setInterval(() => guidance.tick(), 200);
 
   // ---------- 상태 표시 ----------
   function setStatus(node, s, text) { node.dataset.state = s; node.lastChild.textContent = text; }
@@ -96,17 +113,23 @@
   function loadPrefs() {
     try {
       const p = JSON.parse(localStorage.getItem("gildongmu.prefs") || "{}");
+      if (typeof p.voiceEnabled === "boolean") state.voiceEnabled = p.voiceEnabled;
       if (p.mode && MODE_LABEL[p.mode]) selectMode(p.mode, false);
       if (p.device) {
         const has = [...el.deviceSelect.options].some((o) => o.value === p.device);
         if (has) el.deviceSelect.value = p.device;
         else { el.deviceSelect.value = "__custom__"; el.deviceCustom.value = p.device; }
       }
-    } catch (_) { /* ignore */ }
+    } catch (_) { /* 설정 읽기 실패는 무시 */ }
     el.deviceCustom.hidden = el.deviceSelect.value !== "__custom__";
+    if (!state.running && !state.starting) el.guidanceText.textContent = idleVoiceText();
+    refreshButtons();
   }
   function savePrefs() {
-    try { localStorage.setItem("gildongmu.prefs", JSON.stringify({ mode: state.mode, device: currentDevice() })); } catch (_) { /* ignore */ }
+    try { localStorage.setItem("gildongmu.prefs", JSON.stringify({ mode: state.mode, device: currentDevice(), voiceEnabled: state.voiceEnabled })); } catch (_) { /* 설정 저장 실패는 무시 */ }
+  }
+  function idleVoiceText() {
+    return state.voiceEnabled ? "음성 안내가 켜져 있습니다. 테스트를 시작하면 신호를 읽습니다." : "음성 안내가 꺼져 있습니다.";
   }
 
   function selectMode(mode, refill = true) {
@@ -119,7 +142,9 @@
     const list = state.models.filter((m) => m.mode === state.mode);
     el.modelSelect.innerHTML = list.map((m) =>
       `<option value="${m.id}" ${m.available ? "" : "disabled"}>${m.name}${m.available ? "" : " (가중치 없음)"}</option>`).join("");
-    const first = list.find((m) => m.available && !m.is_mock) || list.find((m) => m.available);
+    const preferred = state.mode === "traffic" ? "traffic-best-yolo-v2" : null;
+    const first = list.find((m) => m.available && m.id === preferred)
+      || list.find((m) => m.available && !m.is_mock) || list.find((m) => m.available);
     if (first) el.modelSelect.value = first.id;
     updateModelHint();
   }
@@ -131,7 +156,7 @@
 
   function refreshButtons() {
     const ready = state.cameraOn && !!el.modelSelect.value && currentDevice().length > 0;
-    el.btnStart.disabled = !ready || state.running;
+    el.btnStart.disabled = !ready || state.running || state.starting;
     el.btnStart.hidden = state.running;
     el.btnStop.hidden = !state.running;
     // 테스트 중에는 숨기되, 카메라가 끊기면 다시 켤 수 있게 보여준다
@@ -140,6 +165,9 @@
     const locked = state.running || !!state.sessionId;
     el.setup.hidden = locked;
     el.runInfo.hidden = !locked;
+    el.guidancePanel.hidden = state.mode !== "traffic";
+    el.btnMute.disabled = state.mode !== "traffic";
+    el.btnMute.textContent = state.voiceEnabled ? "음성 끄기" : "음성 켜기";
   }
 
   // ---------- 서버 ----------
@@ -165,6 +193,8 @@
 
   // ---------- 카메라 ----------
   async function startCamera() {
+    guidance.stop(state.running && state.voiceEnabled
+      ? "카메라 재시작 후 음성을 껐다 켜서 안내를 재개해 주세요." : idleVoiceText());
     showAlert(null);
     el.btnCamera.disabled = true;
     try {
@@ -182,6 +212,7 @@
     }
   }
   GCamera.setOnEnded(() => {
+    guidance.stop("카메라가 끊겨 음성 안내를 중단했습니다. 카메라를 다시 켠 뒤 음성을 껐다 켜 주세요.");
     state.cameraOn = false;
     el.frame.classList.remove("live");
     setBadge("paused", "카메라 끊김");
@@ -191,6 +222,8 @@
 
   // ---------- 세션 ----------
   async function startSession() {
+    if (state.starting || state.running || state.sessionId) return;
+    state.starting = true;
     showAlert(null);
     el.summary.hidden = true;
     el.btnStart.disabled = true;
@@ -202,11 +235,16 @@
       note: el.note.value.trim(),
       settings: { confidence: settings.confidence, image_max_side: settings.image_max_side,
         target_fps: settings.target_fps, jpeg_quality: settings.jpeg_quality },
-      client: { user_agent: navigator.userAgent, screen_width: screen.width, screen_height: screen.height, platform: navigator.platform || "", app_version: "sesac-73-latency-v3" },
+      client: { user_agent: navigator.userAgent, screen_width: screen.width, screen_height: screen.height, platform: navigator.platform || "", app_version: "traffic-audio-v13" },
     };
     try {
+      // 켜기로 선택된 경우 사용자 클릭 안에서 재생을 요청한다.
+      const selectedModel = state.models.find(m => m.id === body.model_id);
+      if (state.mode === "traffic" && state.voiceEnabled) guidance.start(null, !!selectedModel?.is_mock);
+      else guidance.stop();
       const r = await GApi.createSession(body);
       state.sessionId = r.session_id;
+      guidance.bindSession(r.session_id);
       state.logWarning = "";
       state.timings = GApi.createTimings(r.session_id, (message) => {
         if (state.sessionId !== r.session_id) return;
@@ -229,19 +267,27 @@
       window.scrollTo({ top: 0, behavior: "smooth" });
       state.loopTask = loop(r.session_id, state.timings, settings);
     } catch (e) {
+      guidance.stop("테스트를 시작하지 못해 음성 안내를 종료했습니다.");
       if (e.code === "session_conflict" && e.detail && e.detail.active_session) {
         showAlert(`이미 실행 중인 세션이 있습니다 (${e.detail.active_session.id}). 서버에서 종료 후 다시 시도하세요.`);
       } else {
         showAlert(`테스트를 시작하지 못했습니다: ${e.message}`);
       }
       refreshButtons();
+    } finally {
+      state.starting = false;
+      refreshButtons();
     }
   }
 
   async function stopSession() {
     if (!state.sessionId) return;
+    guidance.stop(idleVoiceText());
     state.running = false;
     state.stopping = true;
+    refreshButtons();
+    el.btnStop.hidden = false;
+    el.btnStart.hidden = true;
     el.btnStop.disabled = true;
     setLabel(el.btnStop, "종료 중…");
     setBadge("camera", "종료 중");
@@ -319,6 +365,7 @@
         row.jpeg_bytes = blob?.size || 0;
         if (!state.running) break;
         if (!blob) {
+          guidance.interrupt();
           row.status = "error"; row.error_code = "capture_empty";
           const waitStarted = performance.now();
           await sleep(100);
@@ -334,7 +381,11 @@
         row.status = "ok";
         state.sent += 1;
         state.recvTimes.push(row.response_received_ms);
-        if (res.frame_id === frameId) { drawing = GOverlay.draw(res.detections, res.event); showResult(res); }
+        if (res.frame_id === frameId) {
+          drawing = GOverlay.draw(res.detections, res.event);
+          showResult(res);
+          guidance.accept(res, t0);
+        }
         // 화면의 기존 '왕복' 표시는 캡처를 포함한 값으로 유지한다.
         updateMetrics(res.timing, row.response_received_ms - t0);
         if (!res.saved) setStatus(el.storageStatus, "warn", "저장 꺼짐"); else setStatus(el.storageStatus, "ok", "저장");
@@ -347,6 +398,7 @@
           row.throttle_wait_ms = performance.now() - waitStarted;
         }
       } catch (e) {
+        guidance.interrupt();
         row.status = "error";
         row.error_code = e.code || (row.request_started_ms == null ? "capture_failed" : "client_error");
         row.http_status = e.status || 0;
@@ -360,6 +412,7 @@
         if (e.status === 409 || e.status === 404) {
           showAlert(`세션이 서버에서 종료되었습니다 (${e.message}). 테스트를 다시 시작하세요.`);
           state.running = false; state.sessionId = null;
+          guidance.stop();
           setBadge("camera", "카메라 켜짐"); refreshButtons();
           break;
         }
@@ -397,12 +450,28 @@
   el.btnCamera.addEventListener("click", startCamera);
   el.btnStart.addEventListener("click", startSession);
   el.btnStop.addEventListener("click", stopSession);
+  el.btnSoundCheck.addEventListener("click", () => {
+    player.speak("음성 확인입니다. 이 문장이 들리면 신호 안내를 사용할 수 있습니다.");
+  });
+  el.btnMute.addEventListener("click", () => {
+    if (state.mode !== "traffic") return;
+    state.voiceEnabled = !state.voiceEnabled;
+    savePrefs();
+    if (state.voiceEnabled && (state.running || state.starting) && !state.stopping && state.cameraOn && !document.hidden) {
+      const model = state.models.find(m => m.id === el.modelSelect.value);
+      guidance.start(state.sessionId, !!model?.is_mock);
+    } else guidance.stop(state.voiceEnabled && (state.running || state.starting)
+      ? "음성 안내가 켜져 있습니다. 화면과 카메라가 준비되면 음성을 껐다 켜 주세요." : idleVoiceText());
+  });
   // 화면 잠금이나 앱 전환에서 돌아왔을 때 카메라가 죽어 있으면 재시작 버튼을 보여준다
   document.addEventListener("visibilitychange", () => {
+    if (document.hidden) guidance.stop("화면이 숨겨져 음성 안내를 중단했습니다. 돌아온 뒤 음성을 껐다 켜 주세요.");
+    refreshButtons();
     if (document.hidden || !state.cameraOn) return;
     GCamera.video.play().catch(() => {});
     setTimeout(() => {
       if (GCamera.active()) return;
+      guidance.stop("카메라가 끊겨 음성 안내를 종료했습니다.");
       state.cameraOn = false;
       el.frame.classList.remove("live");
       setBadge("paused", "카메라 끊김");
@@ -411,6 +480,7 @@
     }, 800);
   });
   window.addEventListener("beforeunload", (e) => { if (state.sessionId) { e.preventDefault(); e.returnValue = ""; } });
+  window.addEventListener("pagehide", () => guidance.stop());
 
   // ---------- 초기화 ----------
   loadPrefs();

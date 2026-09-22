@@ -1,5 +1,5 @@
 /**
- * file_path: backend/static/js/overlay.js
+ * 파일 경로: backend/static/js/overlay.js
  * 영상 위에 검출 박스 또는 보행가능(초록색)·횡단보도(핑크색) 마스크를 표시한다.
  * object-fit: contain 여백을 보정하고 종료 후 늦게 도착한 마스크는 무시한다.
  */
@@ -33,9 +33,10 @@ window.GOverlay = (() => {
         color: status === "used" ? "#22c9c9" : "#b57bff" };
     }
     const selection = d.class_name === "pedestrian_signal" ? d.extra?.selection_status : null;
+    const identity = Number.isInteger(d.track_id) ? ` · ID ${d.track_id}` : "";
     if (selection === "unselected" || selection === "candidate") {
       return {
-        label: selection === "candidate" ? "신호등 · 선택 확인 중" : "신호등 · 미선택",
+        label: (selection === "candidate" ? "신호등 · 선택 확인 중" : "신호등 · 미선택") + identity,
         confidenceText: `검출 ${(d.confidence * 100).toFixed(0)}%`,
         color: selection === "candidate" ? "#ffb020" : "#4f8cff",
       };
@@ -45,7 +46,7 @@ window.GOverlay = (() => {
       const label = { red: "빨간불", green: "초록불", unknown: "신호 미확인" }[state];
       const score = d.extra?.color_confidence;
       return {
-        label: selection === "selected" ? `안내 대상 · ${label}` : label,
+        label: (selection === "selected" ? `안내 대상 · ${label}` : label) + identity,
         confidenceText: state !== "unknown" && typeof score === "number" && Number.isFinite(score)
           ? `${(score * 100).toFixed(1)}%` : "",
         color: { red: "#e5393b", green: "#1fa84a", unknown: "#888888" }[state],
@@ -69,7 +70,10 @@ window.GOverlay = (() => {
       no_signal_in_crossing_direction: "횡단보도 방향의 신호등 없음",
       ambiguous_signals: "연결할 신호등 선택 불가",
       waiting_for_temporal_consistency: "신호등 연결 확인 중",
+      waiting_for_tracking: "신호등 추적 확인 중",
       waiting_for_target_switch: "다른 신호등으로 변경 확인 중 · 색상 안내 보류",
+      waiting_for_target_hold: "기존 대상 유지 중 · 색상 안내 보류",
+      waiting_for_target_reacquisition: "기존 신호등 다시 확인 중",
       waiting_for_target_revalidation: "기존 신호등 연결 재확인 중 · 색상 안내 보류",
       target_switched: "횡단보도 연결 확인 · 신호등 대상 변경",
       target_revalidated: "기존 신호등 연결 재확인",

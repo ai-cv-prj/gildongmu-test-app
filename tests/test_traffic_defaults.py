@@ -17,7 +17,7 @@ def test_confidence_default_only_changes_for_traffic():
 
 def test_candidate_matches_after_three_consistent_frames():
     selector = TemporalSelector()
-    signals = [{"xyxy": [100, 100, 120, 140]}]
+    signals = [{"xyxy": [100, 100, 120, 140], "track_id": 1}]
     crosswalks = [{"xyxy": [0, 200, 500, 600]}]
     for frame in (1, 2, 3):
         decision = {"status": "candidate", "signal_index": 0, "crosswalk_index": 0, "reason": None}

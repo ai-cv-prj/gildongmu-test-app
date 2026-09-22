@@ -1,8 +1,8 @@
-"""Estimate crosswalk direction from repeated paint-stripe boundaries.
+"""반복되는 도색 줄무늬의 경계로 횡단보도 방향을 추정한다.
 
-A detector box only restricts the search. At least three unclipped stripe ends
-must support each boundary; insufficient or competing directions stay unknown.
-These image heuristics do not establish which crossing the user intends to use.
+검출 박스는 탐색 범위만 제한한다. 각 경계는 잘리지 않은 줄무늬 끝점이
+최소 세 개 이상 뒷받침해야 하며, 근거가 부족하거나 방향 후보가 경합하면 판단을 보류한다.
+이 영상 기반 휴리스틱으로 사용자가 건너려는 횡단보도를 확정할 수는 없다.
 """
 import numpy as np
 
@@ -37,7 +37,7 @@ def stripe_candidates(frame, box, cv2):
         edge = edges[np.argmax(np.linalg.norm(edges, axis=1))]
         if abs(edge[1]) > abs(edge[0]) * 0.7:
             continue
-        # Actual contour ends avoid extrapolating beyond an image-clipped stripe.
+        # 실제 윤곽 끝점을 사용해 화면에 잘린 줄무늬 바깥까지 외삽하지 않는다.
         points = contour.reshape(-1, 2)
         axis = edge / np.linalg.norm(edge)
         if axis[0] < 0:
@@ -52,7 +52,7 @@ def stripe_candidates(frame, box, cv2):
             'clipped_left': bool(points[:, 0].min() <= 2),
             'clipped_right': bool(points[:, 0].max() >= roi.shape[1] - 3),
         })
-    # Bound pairwise fitting cost on highly textured road surfaces.
+    # 무늬가 복잡한 노면에서도 점 쌍을 이용한 직선 추정의 계산량을 제한한다.
     bars = sorted(bars, key=lambda bar: bar['area'], reverse=True)[:48]
     return None, {'mask': mask, 'bars': bars, 'roi': [x1, y1, x2, y2]}
 
@@ -105,7 +105,7 @@ def direction(bars, width, height, roi):
             if not (roi[1] - 0.5 * height <= y <= min(roi[1] + 0.4 * (roi[3] - roi[1]), farthest_support - 15)
                     and roi[0] - 0.25 * width <= x <= roi[2] + 0.25 * width):
                 continue
-            # Reject near-parallel or noisy fits with unstable intersections.
+            # 거의 평행하거나 잡음이 많아 교점이 불안정한 직선 추정은 제외한다.
             uncertainty = (a['error'] + b['error'] + 2) / abs(delta)
             if uncertainty > 0.10 * height:
                 continue

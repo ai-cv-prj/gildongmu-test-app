@@ -1,4 +1,4 @@
-"""Conservative image motion compensation; never predicts a detection or color."""
+"""영상 움직임을 보수적으로 보정하며, 검출 결과나 색상을 예측해 만들지 않는다."""
 import math
 
 import numpy as np
@@ -42,7 +42,7 @@ def estimate_camera_motion(previous, current, shape, cv2):
     mask = inliers.reshape(-1).astype(bool)
     matched = a[mask]
     ratio = float(mask.mean())
-    # Features must cover multiple areas of the image, not just one moving car.
+    # 특징점은 움직이는 차량 한 대에 몰리지 않고 영상의 여러 영역에 분포해야 한다.
     cells = {(min(2, int(x * 3 / width)), min(2, int(y * 3 / height))) for x, y in matched}
     scale = math.hypot(matrix[0, 0], matrix[1, 0])
     angle = abs(math.degrees(math.atan2(matrix[1, 0], matrix[0, 0])))
@@ -56,7 +56,7 @@ def estimate_camera_motion(previous, current, shape, cv2):
                   "matches": len(a), "inliers": int(mask.sum()), "inlier_ratio": round(ratio, 4)}
     if not reliable:
         return None, diagnostic
-    # Account for rounded resize dimensions independently along x and y.
+    # 크기 조정 시 반올림된 가로·세로 크기를 각 축에 따로 반영한다.
     scaling = np.diag([shape[1] / width, shape[0] / height, 1.0])
     affine = np.eye(3)
     affine[:2] = matrix

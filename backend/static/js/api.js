@@ -1,5 +1,5 @@
 /**
- * file_path: backend/static/js/api.js
+ * 파일 경로: backend/static/js/api.js
  * 프레임·실시간 녹화를 전송하고 세션별 지연 로그를 모아 저장·재시도한다.
  */
 window.GApi = (() => {
@@ -16,7 +16,7 @@ window.GApi = (() => {
 
   async function parse(res) {
     let body = null;
-    try { body = await res.json(); } catch (_) { /* no body */ }
+    try { body = await res.json(); } catch (_) { /* JSON 응답 본문을 읽을 수 없으면 기본값 유지 */ }
     if (!res.ok) {
       const err = (body && body.error) || {};
       throw new ApiError(res.status, err.code || "http_error", err.message || `HTTP ${res.status}`, err.detail);

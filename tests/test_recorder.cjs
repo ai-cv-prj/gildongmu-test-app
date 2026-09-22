@@ -1,5 +1,5 @@
 /**
- * file_path: tests/test_recorder.cjs
+ * 파일 경로: tests/test_recorder.cjs
  * 녹화용 합성의 30FPS 제한과 종료·재시작 동작을 검사한다.
  * 가짜 화면 갱신 시계를 사용하며 실제 카메라나 파일은 만들지 않는다.
  */

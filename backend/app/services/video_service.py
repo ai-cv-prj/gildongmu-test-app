@@ -74,6 +74,8 @@ def render(frame: np.ndarray, result: dict) -> np.ndarray:
             label += f" {color_state.upper()}"
         if detection["class_name"] == "crosswalk":
             label, _ = crosswalk_style(detection)
+        if detection["class_name"] == "pedestrian_signal" and detection.get("track_id") is not None:
+            label += f" ID {detection['track_id']}"
         (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         label_y = y1 - 5 if y1 - text_height - baseline - 8 >= 38 else y2 + text_height + 8
         label_y = min(height - baseline - 2, label_y)

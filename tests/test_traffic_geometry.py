@@ -1,4 +1,4 @@
-"""Image-level regression tests for paint boundaries, clipping and missing evidence."""
+"""도색 경계, 화면 잘림, 근거 부족을 영상 단위로 검증하는 회귀 테스트."""
 import cv2
 import numpy as np
 import pytest

@@ -33,8 +33,9 @@ SIGNALS = [[100, 100, 120, 140, 0.8, 0], [300, 100, 320, 140, 0.7, 0]]
 FRAME = np.zeros((640, 480, 3), dtype=np.uint8)
 
 
-def infer(pipe, frame_id=1):
-    return pipe.infer(FRAME, InferenceContext("check", frame_id, frame_id * 200, 0.25))
+def infer(pipe, frame_id=1, captured_at_ms=None):
+    timestamp = frame_id * 200 if captured_at_ms is None else captured_at_ms
+    return pipe.infer(FRAME, InferenceContext("check", frame_id, timestamp, 0.25))
 
 
 def test_two_signals_remain_visible_without_crosswalk():
@@ -50,108 +51,6 @@ def test_two_signals_remain_visible_without_crosswalk():
         assert d["extra"]["color_confidence"] is None
         assert 0 <= d["box"]["x1"] < d["box"]["x2"] <= 1
     pipe._classify.assert_not_called()
-
-
-def test_one_to_two_keeps_target_despite_order_and_confidence_and_reclassifies():
-    pipe = make_pipeline(SIGNALS[:1])
-    first = infer(pipe)
-    assert first["event"]["signal_state"] == "green"
-    assert first["event"]["selected_detection_index"] == 0
-    assert first["detections"][0]["extra"]["selection_status"] == "selected"
-    # 새 신호등이 더 높은 확률로 먼저 나와도 이전 대상을 유지한다.
-    pipe.model = make_pipeline([[300, 100, 320, 140, 0.99, 0], SIGNALS[0]]).model
-    pipe._classify.return_value = ("red", 0.98)
-    second = infer(pipe, 2)
-    assert len(second["detections"]) == 2
-    assert second["event"]["selected_detection_index"] == 1
-    assert second["event"]["association_status"] == "tracked"
-    assert second["event"]["selection_origin"] == "single_signal"
-    assert second["event"]["signal_state"] == "red"
-    assert second["detections"][1]["track_id"] == first["detections"][0]["track_id"]
-    assert second["detections"][0]["extra"]["signal_state"] == "unknown"
-    assert pipe._classify.call_count == 2
-
-
-def test_small_motion_rechecks_geometry_but_can_track_when_crosswalk_is_missing(monkeypatch):
-    pipe = make_pipeline(SIGNALS[:1])
-    infer(pipe)
-    recheck = Mock(wraps=traffic.associate)
-    monkeypatch.setattr(traffic, "associate", recheck)
-    for fid in (2, 3, 4):
-        dx = fid * 2
-        pipe.model = make_pipeline([[100 + dx, 100, 120 + dx, 140, 0.6, 0], SIGNALS[1]]).model
-        result = infer(pipe, fid)
-        assert result["event"]["selected_detection_index"] == 0
-        assert result["detections"][0]["track_id"] == 1
-    assert recheck.call_count == 3
-
-
-@pytest.mark.parametrize("replacement", [
-    [300, 100, 320, 140, 0.99, 0],  # 먼 곳의 다른 신호등
-    [70, 40, 150, 200, 0.99, 0],  # 같은 중심이어도 크기가 크게 달라짐
-])
-def test_different_single_signal_uses_original_acquisition_with_new_track_id(replacement):
-    pipe = make_pipeline(SIGNALS[:1])
-    first = infer(pipe)
-    pipe.model = make_pipeline([replacement]).model
-    result = infer(pipe, 2)
-    assert result["event"]["tracking"]["reason"] == "target_missing"
-    assert result["event"]["association_status"] == "single_signal"
-    assert result["event"]["selected_detection_index"] == 0
-    assert result["detections"][0]["track_id"] != first["detections"][0]["track_id"]
-    assert pipe._classify.call_count == 2
-
-
-def test_ambiguous_overlap_ends_track_instead_of_picking_high_confidence():
-    pipe = make_pipeline(SIGNALS[:1])
-    infer(pipe)
-    pipe.model = make_pipeline([[98, 100, 118, 140, 0.99, 0],
-                                [102, 100, 122, 140, 0.4, 0]]).model
-    result = infer(pipe, 2)
-    assert result["event"]["tracking"]["reason"] == "ambiguous_match"
-    assert result["event"]["selected_detection_index"] is None
-    pipe._classify.assert_called_once()
-
-
-def test_missing_target_emits_no_historical_box_or_color_and_ends_track():
-    pipe = make_pipeline(SIGNALS[:1])
-    infer(pipe)
-    pipe.model = make_pipeline([]).model
-    missing = infer(pipe, 2)
-    assert missing["detections"] == []
-    assert missing["event"]["signal_state"] == "unknown"
-    pipe.model = make_pipeline(SIGNALS).model
-    returned = infer(pipe, 3)
-    assert returned["event"]["selected_detection_index"] is None
-    pipe._classify.assert_called_once()
-
-
-@pytest.mark.parametrize("fid,timestamp,shape", [
-    (3, 600, (640, 480, 3)),  # 누락 프레임
-    (2, 1201, (640, 480, 3)),  # 1초 초과
-    (1, 400, (640, 480, 3)),  # 중복/역순 프레임
-    (2, 100, (640, 480, 3)),  # 역순 촬영 시각
-    (2, 400, (960, 540, 3)),  # 해상도 변경
-])
-def test_discontinuous_frames_cannot_keep_old_target(fid, timestamp, shape):
-    pipe = make_pipeline(SIGNALS[:1])
-    infer(pipe)
-    pipe.model = make_pipeline(SIGNALS).model
-    result = pipe.infer(np.zeros(shape, dtype=np.uint8), InferenceContext("check", fid, timestamp, 0.25))
-    assert result["event"]["tracking"]["reason"] == "discontinuous_frames"
-    assert result["event"]["selected_detection_index"] is None
-
-
-def test_target_state_is_isolated_by_session_and_cleared_on_reset():
-    pipe = make_pipeline(SIGNALS[:1])
-    infer(pipe)
-    pipe.model = make_pipeline(SIGNALS).model
-    other = pipe.infer(FRAME, InferenceContext("other", 2, 400, 0.25))
-    assert other["event"]["selected_detection_index"] is None
-    pipe.reset_session("check")
-    assert infer(pipe, 2)["event"]["selected_detection_index"] is None
-    pipe.close_session("check")
-    assert "check" not in pipe._selectors
 
 
 def test_candidate_and_selected_target_are_distinct(monkeypatch):
@@ -189,6 +88,41 @@ def test_no_signal_has_no_target():
     assert result["event"]["detected_signal_count"] == 0
     assert result["event"]["selected_detection_index"] is None
     assert result["event"]["association_reason"] == "no_signal_detected"
+    pipe._classify.assert_not_called()
+
+
+def test_weak_current_detection_keeps_selected_id_without_new_weak_candidates():
+    pipe = make_pipeline(SIGNALS[:1])
+    first = infer(pipe)
+    original_id = first["detections"][0]["track_id"]
+    weak = [[102, 100, 122, 140, 0.15, 0], [300, 100, 320, 140, 0.2, 0]]
+    pipe.model = make_pipeline(weak).model
+    for fid in (2, 3):
+        result = infer(pipe, fid)
+        assert len(result["detections"]) == 1
+        target = result["detections"][0]
+        assert target["track_id"] == original_id
+        assert target["confidence"] == 0.15
+        assert target["box"]["x1"] == 102 / FRAME.shape[1]
+        assert result["event"]["association_status"] == "tracked"
+        assert result["event"]["signal_state"] == "green"
+        assert result["event"]["raw_detected_signal_count"] == 2
+        assert result["event"]["suppressed_signal_count"] == 0
+        assert result["event"]["unmatched_low_confidence_count"] == 1
+    assert pipe._classify.call_count == 3
+
+
+@pytest.mark.parametrize("threshold,score", [(0.25, 0.15), (0.4, 0.3)])
+def test_lower_detector_threshold_does_not_create_weak_targets_or_crosswalks(threshold, score):
+    pipe = make_pipeline([[100, 100, 120, 140, score, 0],
+                          [0, 200, 480, 640, score, 1]])
+    pipe.model.predict = Mock(wraps=pipe.model.predict)
+    result = pipe.infer(FRAME, InferenceContext("check", 1, 200, threshold))
+    assert pipe.model.predict.call_args.kwargs["conf"] == 0.1
+    assert result["detections"] == []
+    assert result["event"]["selected_detection_index"] is None
+    assert result["event"]["unmatched_low_confidence_count"] == 1
+    assert result["event"]["crosswalk_candidate_count"] == 0
     pipe._classify.assert_not_called()
 
 
@@ -269,18 +203,6 @@ def test_ambiguous_crosswalks_are_not_reported_as_missing():
     assert diag["selected_detection_index"] is None
 
 
-def test_tracking_does_not_claim_crosswalk_link_failure():
-    pipe = make_pipeline(SIGNALS[:1])
-    infer(pipe)
-    pipe.model = make_pipeline(SIGNALS + [[0, 150, 480, 300, 0.646, 1]]).model
-    result = infer(pipe, 2)
-    assert result["event"]["selected_detection_index"] == 0
-    diag = result["event"]["crosswalk_diagnostics"]
-    assert diag["detection_status"] == "position_rejected"
-    assert diag["connection_status"] == "previous_target_retained"
-    assert diag["selected_detection_index"] is None
-
-
 def test_crosswalk_without_signal_still_has_a_box():
     pipe = make_pipeline([[0, 200, 480, 640, 0.8, 1]])
     result = infer(pipe)
@@ -293,122 +215,333 @@ def test_crosswalk_without_signal_still_has_a_box():
 CROSSING = [0, 200, 480, 640, 0.8, 1]
 
 
-def seed_left_target(pipe):
-    first = infer(pipe)
-    assert first['event']['selected_detection_index'] == 0
+def acquire_left_target(pipe, monkeypatch):
+    """실제 선택과 같이 횡단보도 연결을 세 번 확인한다."""
+    monkeypatch.setattr(traffic, "estimate_vanishing_point", lambda *args: [110, 180])
     pipe.model = make_pipeline(SIGNALS + [CROSSING]).model
-    return first['detections'][0]['track_id']
-
-
-def test_visible_target_can_switch_after_three_geometric_confirmations(monkeypatch):
-    pipe = make_pipeline(SIGNALS[:1])
-    old_id = seed_left_target(pipe)
-    monkeypatch.setattr(traffic, 'estimate_vanishing_point', lambda *args: [310, 180])
-    for fid in (2, 3):
+    for fid in (1, 2, 3):
         result = infer(pipe, fid)
-        assert result['event']['selected_detection_index'] is None
-        assert result['event']['candidate_detection_index'] == 1
-        assert result['event']['association_reason'] == 'waiting_for_target_switch'
-        assert result['event']['signal_state'] == 'unknown'
-        assert result['event']['tracking']['target_change']['stable_frames'] == fid - 1
-    pipe._classify.assert_called_once()
-    pipe._classify.return_value = ('red', 0.98)
-    changed = infer(pipe, 4)
-    assert changed['event']['selected_detection_index'] == 1
-    assert changed['event']['association_reason'] == 'target_switched'
-    assert changed['event']['signal_state'] == 'red'
-    assert changed['event']['selection_origin'] == 'crosswalk_matched'
-    assert changed['detections'][1]['track_id'] != old_id
-    new_id = changed['detections'][1]['track_id']
-    retained = infer(pipe, 5)
-    assert retained['detections'][1]['track_id'] == new_id
-    assert retained['event']['association_status'] == 'tracked'
+        assert result["event"]["selected_detection_index"] == (0 if fid == 3 else None)
+    return result["detections"][0]["track_id"]
 
 
-def test_supporting_geometry_keeps_id_despite_detection_order_change(monkeypatch):
-    pipe = make_pipeline(SIGNALS[:1])
-    old_id = seed_left_target(pipe)
-    monkeypatch.setattr(traffic, 'estimate_vanishing_point', lambda *args: [110, 180])
-    pipe.model = make_pipeline([SIGNALS[1], SIGNALS[0], CROSSING]).model
-    result = infer(pipe, 2)
-    assert result['event']['selected_detection_index'] == 1
-    assert result['detections'][1]['track_id'] == old_id
-    assert result['event']['tracking']['revalidation_status'] == 'candidate'
+@pytest.mark.parametrize("crossings,point,reason", [
+    ([], [110, 180], "no_unambiguous_near_crosswalk"),
+    ([[0, 200, 480, 640, 0.4, 1]], [110, 180], "no_unambiguous_near_crosswalk"),
+    ([[0, 150, 480, 300, 0.8, 1]], [110, 180], "no_unambiguous_near_crosswalk"),
+    ([CROSSING], None, "vanishing_point_unavailable"),
+    ([CROSSING], [1000, 180], "no_signal_in_crossing_direction"),
+])
+def test_multiple_signals_need_crosswalk_direction(monkeypatch, crossings, point, reason):
+    pipe = make_pipeline(SIGNALS + crossings)
+    monkeypatch.setattr(traffic, "estimate_vanishing_point", lambda *args: point)
+    for fid in range(1, 6):
+        result = infer(pipe, fid)
+        assert result["event"]["selected_detection_index"] is None
+        assert result["event"]["signal_state"] == "unknown"
+        assert result["event"]["association_reason"] == reason
+    pipe._classify.assert_not_called()
 
 
-def test_challenger_confirmation_survives_detection_order_change(monkeypatch):
-    pipe = make_pipeline(SIGNALS[:1])
-    seed_left_target(pipe)
-    monkeypatch.setattr(traffic, 'estimate_vanishing_point', lambda *args: [310, 180])
-    infer(pipe, 2)
-    pipe.model = make_pipeline([SIGNALS[1], SIGNALS[0], CROSSING]).model
-    assert infer(pipe, 3)['event']['selected_detection_index'] is None
+def test_visible_target_stays_locked_beyond_2500ms_and_color_updates(monkeypatch):
+    pipe = make_pipeline([])
+    old_id = acquire_left_target(pipe, monkeypatch)
+    # 다른 신호등이 횡단보도 방향과 더 잘 맞고 신뢰도가 높아도 교체하지 않는다.
+    monkeypatch.setattr(traffic, "estimate_vanishing_point", lambda *args: [310, 180])
+    for fid in range(4, 24):
+        reordered = fid % 2 == 0
+        other = [300, 100, 320, 140, 0.99, 0]
+        boxes = [other, SIGNALS[0]] if reordered else [SIGNALS[0], other]
+        pipe.model = make_pipeline(boxes + [CROSSING]).model
+        color = "red" if fid < 10 else "green"
+        pipe._classify.return_value = (color, 0.98)
+        result = infer(pipe, fid)
+        index = 1 if reordered else 0
+        assert result["event"]["selected_detection_index"] == index
+        assert result["detections"][index]["track_id"] == old_id
+        assert result["event"]["selection_origin"] == "crosswalk_matched"
+        assert result["event"]["signal_state"] == color
+        assert result["event"]["association_reason"] == "previous_target_retained"
+        assert result["detections"][1-index]["extra"]["signal_state"] == "unknown"
+        assert "blink" not in result["event"]
+        assert "blink" not in result["detections"][index]["extra"]
+    assert pipe._classify.call_count == 21
+
+
+@pytest.mark.parametrize("point", [None, [210, 180], [1000, 180]])
+def test_locked_target_survives_changed_or_missing_crosswalk_direction(monkeypatch, point):
+    pipe = make_pipeline([])
+    old_id = acquire_left_target(pipe, monkeypatch)
+    monkeypatch.setattr(traffic, "estimate_vanishing_point", lambda *args: point)
+    pipe.model = make_pipeline(SIGNALS + [CROSSING]).model
+    assert infer(pipe, 4)["detections"][0]["track_id"] == old_id
+    # 횡단보도가 사라져도 현재 관측된 동일 대상의 색상은 계속 분류한다.
+    pipe.model = make_pipeline(SIGNALS[:1]).model
+    returned = infer(pipe, 5)
+    assert returned["detections"][0]["track_id"] == old_id
+    assert returned["event"]["signal_state"] == "green"
+
+
+def test_small_motion_tracks_without_reselecting_crosswalk(monkeypatch):
+    pipe = make_pipeline([])
+    old_id = acquire_left_target(pipe, monkeypatch)
+    for fid in (4, 5, 6):
+        dx = (fid - 3) * 2
+        pipe.model = make_pipeline([[100 + dx, 100, 120 + dx, 140, 0.6, 0], SIGNALS[1]]).model
+        result = infer(pipe, fid)
+        assert result["event"]["selected_detection_index"] == 0
+        assert result["detections"][0]["track_id"] == old_id
+
+
+@pytest.mark.parametrize("replacement", [
+    [300, 100, 320, 140, 0.99, 0],
+    [70, 40, 150, 200, 0.99, 0],
+])
+def test_lost_target_is_immediately_replaced_by_single_signal(monkeypatch, replacement):
+    pipe = make_pipeline([])
+    old_id = acquire_left_target(pipe, monkeypatch)
+    pipe.model = make_pipeline([replacement]).model
     result = infer(pipe, 4)
-    assert result['event']['selected_detection_index'] == 0
-    assert result['event']['association_reason'] == 'target_switched'
+    assert result["event"]["selected_detection_index"] == 0
+    assert result["event"]["association_status"] == "single_signal"
+    assert result["event"]["tracking"]["reason"] == "target_missing"
+    assert result["detections"][0]["track_id"] != old_id
+    assert pipe._classify.call_count == 2
 
 
-def test_candidate_flicker_does_not_switch_or_restore_stale_color(monkeypatch):
-    pipe = make_pipeline(SIGNALS[:1])
-    old_id = seed_left_target(pipe)
-    vp = [310, 180]
-    monkeypatch.setattr(traffic, 'estimate_vanishing_point', lambda *args: vp)
-    for fid, x in enumerate([310, 110, 310, 110, 110], 2):
-        vp[0] = x
-        result = infer(pipe, fid)
-        assert result['event']['selected_detection_index'] is None
-        assert result['event']['signal_state'] == 'unknown'
-    restored = infer(pipe, 7)
-    assert restored['event']['association_reason'] == 'target_revalidated'
-    assert restored['event']['selected_detection_index'] == 0
-    assert restored['detections'][0]['track_id'] == old_id
-
-
-@pytest.mark.parametrize('missing', ['direction', 'crosswalk', 'other_signal'])
-def test_conflict_cannot_be_bypassed_by_missing_geometry_or_single_signal(monkeypatch, missing):
-    pipe = make_pipeline(SIGNALS[:1])
-    seed_left_target(pipe)
-    monkeypatch.setattr(traffic, 'estimate_vanishing_point', lambda *args: [310, 180])
-    infer(pipe, 2)
-    if missing == 'direction':
-        monkeypatch.setattr(traffic, 'estimate_vanishing_point', lambda *args: None)
-    elif missing == 'crosswalk':
-        pipe.model = make_pipeline(SIGNALS).model
-    else:
-        pipe.model = make_pipeline(SIGNALS[:1]).model
-    result = infer(pipe, 3)
-    assert result['event']['selected_detection_index'] is None
-    assert result['event']['signal_state'] == 'unknown'
-    assert result['event']['tracking']['target_change']['state'] == 'blocked'
-    pipe._classify.assert_called_once()
-    # Missing evidence resets the challenger streak.
-    pipe.model = make_pipeline(SIGNALS + [CROSSING]).model
-    monkeypatch.setattr(traffic, 'estimate_vanishing_point', lambda *args: [310, 180])
+def test_reselection_starts_immediately_and_requires_three_crosswalk_confirmations(monkeypatch):
+    pipe = make_pipeline([])
+    old_id = acquire_left_target(pipe, monkeypatch)
+    pipe.model = make_pipeline([SIGNALS[1], [400, 100, 420, 140, 0.9, 0], CROSSING]).model
+    monkeypatch.setattr(traffic, "estimate_vanishing_point", lambda *args: [310, 180])
     for fid in (4, 5):
-        assert infer(pipe, fid)['event']['selected_detection_index'] is None
-    assert infer(pipe, 6)['event']['association_reason'] == 'target_switched'
+        pending = infer(pipe, fid)
+        assert pending["event"]["candidate_detection_index"] == 0
+        assert pending["event"]["selected_detection_index"] is None
+        assert pending["event"]["signal_state"] == "unknown"
+        assert pending["event"]["association_reason"] == "waiting_for_temporal_consistency"
+    selected = infer(pipe, 6)
+    assert selected["event"]["selected_detection_index"] == 0
+    assert selected["event"]["selection_origin"] == "crosswalk_matched"
+    assert selected["detections"][0]["track_id"] != old_id
+    assert pipe._classify.call_count == 2
 
 
-@pytest.mark.parametrize('vp', [[210, 180], [1000, 180]])
-def test_geometric_ambiguity_or_direction_conflict_suppresses_tracked_color(monkeypatch, vp):
-    pipe = make_pipeline(SIGNALS[:1])
-    seed_left_target(pipe)
-    monkeypatch.setattr(traffic, 'estimate_vanishing_point', lambda *args: vp)
-    result = infer(pipe, 2)
-    assert result['event']['selected_detection_index'] is None
-    assert result['event']['association_reason'] in {'ambiguous_signals', 'no_signal_in_crossing_direction'}
-    assert result['event']['signal_state'] == 'unknown'
+def test_overlapping_detections_are_suppressed_before_botsort(monkeypatch):
+    pipe = make_pipeline([])
+    acquire_left_target(pipe, monkeypatch)
+    pipe.model = make_pipeline([[98, 100, 118, 140, 0.99, 0], [102, 100, 122, 140, 0.4, 0]]).model
+    result = infer(pipe, 4)
+    assert result["event"]["tracking"]["tracker"] == "botsort"
+    selected = result["event"]["selected_detection_index"]
+    assert result["detections"][selected]["track_id"] == 1
+    assert len(result["detections"]) == 1
+    assert result["event"]["raw_detected_signal_count"] == 2
+    assert result["event"]["suppressed_signal_count"] == 1
+    assert pipe._classify.call_count == 2
+
+
+def test_missing_target_is_cleared_immediately_without_historical_color(monkeypatch):
+    pipe = make_pipeline([])
+    old_id = acquire_left_target(pipe, monkeypatch)
+    pipe.model = make_pipeline([]).model
+    missing = infer(pipe, 4)
+    assert missing["detections"] == []
+    assert missing["event"]["signal_state"] == "unknown"
+    assert missing["event"]["selected_detection_index"] is None
+    assert pipe._selectors["check"].target_id is None
+    pipe._classify.assert_called_once()
+    pipe.model = make_pipeline(SIGNALS[:1]).model
+    returned = infer(pipe, 5)
+    assert returned["event"]["selected_detection_index"] == 0
+    assert returned["detections"][0]["track_id"] != old_id
+
+
+@pytest.mark.parametrize("fid,timestamp,shape", [
+    (5, 1000, (640, 480, 3)),
+    (4, 1601, (640, 480, 3)),
+    (3, 800, (640, 480, 3)),
+    (4, 500, (640, 480, 3)),
+    (4, 800, (960, 540, 3)),
+])
+def test_discontinuous_frames_require_new_crosswalk_selection(monkeypatch, fid, timestamp, shape):
+    pipe = make_pipeline([])
+    acquire_left_target(pipe, monkeypatch)
+    pipe.model = make_pipeline(SIGNALS).model
+    result = pipe.infer(np.zeros(shape, dtype=np.uint8), InferenceContext("check", fid, timestamp, 0.25))
+    assert result["event"]["tracking"]["reason"] == "discontinuous_frames"
+    assert result["event"]["selected_detection_index"] is None
     pipe._classify.assert_called_once()
 
 
-def test_switch_streak_resets_when_crosswalk_changes(monkeypatch):
+def test_target_state_is_isolated_by_session_and_cleared_on_reset(monkeypatch):
+    pipe = make_pipeline([])
+    acquire_left_target(pipe, monkeypatch)
+    pipe.model = make_pipeline(SIGNALS).model
+    other = pipe.infer(FRAME, InferenceContext("other", 4, 800, 0.25))
+    assert other["event"]["selected_detection_index"] is None
+    assert infer(pipe, 4)["event"]["selected_detection_index"] == 0
+    pipe.reset_session("check")
+    assert infer(pipe, 5)["event"]["selected_detection_index"] is None
+    pipe.close_session("check")
+    assert "check" not in pipe._selectors
+
+
+def test_candidate_streak_resets_when_crosswalk_changes(monkeypatch):
+    pipe = make_pipeline(SIGNALS + [CROSSING])
+    monkeypatch.setattr(traffic, "estimate_vanishing_point", lambda *args: [110, 180])
+    infer(pipe, 1)
+    infer(pipe, 2)
+    pipe.model = make_pipeline(SIGNALS + [[100, 200, 400, 360, 0.8, 1]]).model
+    result = infer(pipe, 3)
+    assert result["event"]["selected_detection_index"] is None
+    infer(pipe, 4)
+    assert infer(pipe, 5)["event"]["selected_detection_index"] == 0
+
+
+def test_tracking_does_not_claim_crosswalk_link_failure(monkeypatch):
+    pipe = make_pipeline([])
+    acquire_left_target(pipe, monkeypatch)
+    pipe.model = make_pipeline(SIGNALS + [[0, 150, 480, 300, 0.646, 1]]).model
+    result = infer(pipe, 4)
+    assert result["event"]["selected_detection_index"] == 0
+    diag = result["event"]["crosswalk_diagnostics"]
+    assert diag["detection_status"] == "position_rejected"
+    assert diag["connection_status"] == "previous_target_retained"
+    assert diag["selected_detection_index"] is None
+
+
+def test_single_signal_is_immediate_but_multiple_signals_require_crosswalk():
     pipe = make_pipeline(SIGNALS[:1])
-    seed_left_target(pipe)
-    monkeypatch.setattr(traffic, 'estimate_vanishing_point', lambda *args: [310, 180])
+    first = infer(pipe)
+    assert first["event"]["selected_detection_index"] == 0
+    assert first["event"]["selection_origin"] == "single_signal"
+    pipe.model = make_pipeline([SIGNALS[1], SIGNALS[0]]).model
+    for fid in (2, 3, 4):
+        pending = infer(pipe, fid)
+        assert pending["event"]["selected_detection_index"] is None
+        assert pending["event"]["signal_state"] == "unknown"
+        assert pending["event"]["association_reason"] == "no_unambiguous_near_crosswalk"
+    pipe._classify.assert_called_once()
+
+
+@pytest.mark.parametrize("selected", [0, 1])
+def test_provisional_target_confirms_crosswalk_then_locks(monkeypatch, selected):
+    pipe = make_pipeline(SIGNALS[:1])
+    first = infer(pipe)
+    old_id = first["detections"][0]["track_id"]
+    point = [110 if selected == 0 else 310, 180]
+    monkeypatch.setattr(traffic, "estimate_vanishing_point", lambda *args: point)
+    for fid in (2, 3, 4):
+        # 검출 순서가 바뀌어도 같은 후보의 연속 확인은 유지한다.
+        order = [1, 0] if fid % 2 else [0, 1]
+        pipe.model = make_pipeline([SIGNALS[i] for i in order] + [CROSSING]).model
+        result = infer(pipe, fid)
+        if fid < 4:
+            assert result["event"]["selected_detection_index"] is None
+            assert result["event"]["candidate_detection_index"] == order.index(selected)
+            assert result["event"]["signal_state"] == "unknown"
+            assert all(d["extra"].get("color_confidence") is None for d in result["detections"])
+            pipe._classify.assert_called_once()
+        else:
+            assert result["event"]["selected_detection_index"] == order.index(selected)
+            assert result["event"]["selection_origin"] == "crosswalk_matched"
+            new_id = result["detections"][order.index(selected)]["track_id"]
+            assert (new_id == old_id) == (selected == 0)
+    # 연결 확정 이후에는 방향 후보가 반대로 바뀌어도 기존 대상을 유지한다.
+    point[0] = 310 if selected == 0 else 110
+    for fid in range(5, 20):
+        result = infer(pipe, fid)
+        assert result["event"]["selected_detection_index"] == selected
+        assert result["detections"][selected]["track_id"] == new_id
+        assert result["event"]["association_reason"] == "previous_target_retained"
+
+
+@pytest.mark.parametrize("failure", ["direction", "crosswalk", "candidate", "single"])
+def test_provisional_confirmation_resets_on_interrupted_evidence(monkeypatch, failure):
+    pipe = make_pipeline(SIGNALS[:1])
+    infer(pipe)
+    point = [310, 180]
+    monkeypatch.setattr(traffic, "estimate_vanishing_point", lambda *args: point)
+    pipe.model = make_pipeline(SIGNALS + [CROSSING]).model
     infer(pipe, 2)
     infer(pipe, 3)
-    # Different crossing has low overlap with the original despite same signal.
-    pipe.model = make_pipeline(SIGNALS + [[100, 200, 400, 360, 0.8, 1]]).model
-    result = infer(pipe, 4)
-    assert result['event']['selected_detection_index'] is None
-    assert result['event']['tracking']['target_change']['stable_frames'] == 1
+    if failure == "direction":
+        point = None
+    elif failure == "crosswalk":
+        pipe.model = make_pipeline(SIGNALS).model
+    elif failure == "candidate":
+        point = [110, 180]
+    else:
+        pipe.model = make_pipeline(SIGNALS[:1]).model
+    interrupted = infer(pipe, 4)
+    assert interrupted["event"]["selected_detection_index"] is None
+    assert interrupted["event"]["signal_state"] == "unknown"
+    pipe._classify.assert_called_once()
+    point = [310, 180]
+    pipe.model = make_pipeline(SIGNALS + [CROSSING]).model
+    for fid in (5, 6):
+        assert infer(pipe, fid)["event"]["selected_detection_index"] is None
+    assert infer(pipe, 7)["event"]["selected_detection_index"] == 1
+
+
+def test_provisional_confirmation_ends_on_target_loss(monkeypatch):
+    pipe = make_pipeline(SIGNALS[:1])
+    first = infer(pipe)
+    monkeypatch.setattr(traffic, "estimate_vanishing_point", lambda *args: [310, 180])
+    pipe.model = make_pipeline(SIGNALS + [CROSSING]).model
+    assert infer(pipe, 2)["event"]["selected_detection_index"] is None
+    pipe.model = make_pipeline([]).model
+    assert infer(pipe, 3)["event"]["selected_detection_index"] is None
+    pipe.model = make_pipeline(SIGNALS[:1]).model
+    returned = infer(pipe, 4)
+    assert returned["event"]["selected_detection_index"] == 0
+    assert returned["event"]["selection_origin"] == "single_signal"
+    assert returned["detections"][0]["track_id"] != first["detections"][0]["track_id"]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_reported_frame75_duplicate_is_one_signal_before_selection(reverse):
+    # 실제 신고 프레임의 정규화 좌표. 같은 신호등의 작은 박스가 큰 박스에 겹쳐 있다.
+    boxes = [
+        [.1993830928, .2077931404, .2296585931, .2352834702, .64086699, 0],
+        [.1992494936, .2070301056, .2309090508, .2494961421, .28398138, 0],
+    ]
+    boxes = [[b[0]*480, b[1]*640, b[2]*480, b[3]*640, *b[4:]] for b in boxes]
+    high = boxes[0]
+    pipe = make_pipeline((list(reversed(boxes)) if reverse else boxes) + [CROSSING])
+    result = infer(pipe)
+    assert result["event"]["raw_detected_signal_count"] == 2
+    assert result["event"]["suppressed_signal_count"] == 1
+    assert result["event"]["detected_signal_count"] == 1
+    assert result["event"]["selected_detection_index"] == 0
+    assert result["event"]["selection_origin"] == "single_signal"
+    assert result["event"]["signal_state"] == "green"
+    assert len(result["detections"]) == 2
+    assert result["detections"][1]["class_name"] == "crosswalk"
+    assert result["detections"][0]["confidence"] == high[4]
+    assert pipe._trackers["check"].next_id == 2
+    pipe._classify.assert_called_once()
+
+
+def test_separate_low_score_signals_are_not_suppressed():
+    pipe = make_pipeline([SIGNALS[0], [123, 100, 143, 140, .28, 0],
+                          [100, 145, 120, 185, .28, 0]])
+    result = infer(pipe)
+    assert result["event"]["detected_signal_count"] == 3
+    assert result["event"]["suppressed_signal_count"] == 0
+    assert len({d["track_id"] for d in result["detections"]}) == 3
+    assert result["event"]["selected_detection_index"] is None
+    pipe._classify.assert_not_called()
+
+
+def test_duplicate_appearing_does_not_trigger_multiple_signal_reconfirmation():
+    pipe = make_pipeline(SIGNALS[:1])
+    first = infer(pipe)
+    pipe.model = make_pipeline([SIGNALS[0], [99, 99, 121, 145, .3, 0]]).model
+    result = infer(pipe, 2)
+    assert result["event"]["selected_detection_index"] == 0
+    assert result["event"]["association_reason"] == "previous_target_retained"
+    assert result["detections"][0]["track_id"] == first["detections"][0]["track_id"]
+    assert result["event"]["suppressed_signal_count"] == 1
+    assert pipe._classify.call_count == 2

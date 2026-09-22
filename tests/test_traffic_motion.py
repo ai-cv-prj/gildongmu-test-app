@@ -1,4 +1,4 @@
-"""Camera shifts may preserve observed candidates, never missing detections."""
+"""카메라 이동 시 관측된 후보는 유지할 수 있지만 사라진 검출은 복원하지 않는지 검증한다."""
 import cv2
 import numpy as np
 import pytest
@@ -25,8 +25,8 @@ def context(fid):
 
 
 def signals(dx=0):
-    return [{'xyxy': [100 + dx, 100, 120 + dx, 140]},
-            {'xyxy': [300 + dx, 100, 320 + dx, 140]}]
+    return [{'xyxy': [100 + dx, 100, 120 + dx, 140], 'track_id': 1},
+            {'xyxy': [300 + dx, 100, 320 + dx, 140], 'track_id': 2}]
 
 
 def test_recovers_global_translation_from_images():
@@ -44,17 +44,22 @@ def test_local_motion_without_image_coverage_is_rejected():
     assert matrix is None
 
 
-def test_large_camera_shift_keeps_current_visible_target_and_not_a_missing_one():
+def test_large_camera_shift_keeps_current_visible_target_and_not_a_missing_one(monkeypatch):
+    def unexpected_motion(*args):
+        pytest.fail('횡단보도 후보가 없으면 선택기가 이동 보정을 실행하면 안 된다')
+
+    monkeypatch.setattr(traffic, 'estimate_camera_motion', unexpected_motion)
     selector = traffic.TemporalSelector()
     image = scene()
     first = selector.select(image, signals()[:1], [], cv2, context(1))
-    second = selector.select(shifted(image, 40, 0), list(reversed(signals(40))), [], cv2, context(2))
-    assert second['signal_index'] == 1
+    second = selector.select(shifted(image, 40, 0), signals(40)[:1], [], cv2, context(2))
+    assert second['signal_index'] == 0
     assert second['track_id'] == first['track_id']
     assert second['status'] == 'tracked'
     missing = selector.select(shifted(image, 80, 0), [], [], cv2, context(3))
     assert missing['signal_index'] is None
-    assert selector.target_box is None
+    assert selector.target_id is None
+    assert missing["tracking"]["previous_track_id"] == first["track_id"]
 
 
 def test_pending_crosswalk_link_survives_camera_shift(monkeypatch):
@@ -69,26 +74,32 @@ def test_pending_crosswalk_link_survives_camera_shift(monkeypatch):
     assert decision['selection_origin'] == 'crosswalk_matched'
 
 
-def test_ambiguous_detections_after_compensation_stay_unknown():
+def test_duplicate_tracker_ids_cannot_select_a_target():
     selector = traffic.TemporalSelector()
     image = scene()
     selector.select(image, signals()[:1], [], cv2, context(1))
-    ambiguous = [{'xyxy': [138, 100, 158, 140]}, {'xyxy': [142, 100, 162, 140]}]
+    ambiguous = [{'xyxy': [138, 100, 158, 140], 'track_id': 1}, {'xyxy': [142, 100, 162, 140], 'track_id': 1}]
     decision = selector.select(shifted(image, 40, 0), ambiguous, [], cv2, context(2))
     assert decision['signal_index'] is None
     assert decision['tracking']['reason'] == 'ambiguous_match'
 
 
-def test_target_switch_confirmation_survives_camera_motion(monkeypatch):
+def test_provisional_crosswalk_confirmation_survives_camera_motion(monkeypatch):
     selector = traffic.TemporalSelector()
     image = scene()
     first = selector.select(image, signals()[:1], [], cv2, context(1))
     monkeypatch.setattr(traffic, 'estimate_vanishing_point', lambda frame, box, cv: [310 + box[0], 180])
-    for fid, dx in enumerate([40, 80, 120], 2):
+    for fid, dx in enumerate([40, 80, 120] + [120] * 10, 2):
         crossing = [{'xyxy': [dx, 200, 400 + dx, 600]}]
         decision = selector.select(shifted(image, dx, 0), signals(dx), crossing, cv2, context(fid))
-        assert decision['tracking']['camera_motion']['reason'] == 'compensated'
-        assert decision['tracking']['target_change']['stable_frames'] == fid - 1
-        assert decision['signal_index'] == (1 if fid == 4 else None)
-    assert decision['reason'] == 'target_switched'
-    assert decision['track_id'] != first['track_id']
+        expected_motion = 'compensated' if fid in (3, 4) else 'no_previous_candidate'
+        assert decision['tracking']['camera_motion']['reason'] == expected_motion
+        if fid < 4:
+            assert decision['signal_index'] is None
+            assert decision['stable_frames'] == fid - 1
+        else:
+            assert decision['signal_index'] == 1
+            assert decision['selection_origin'] == 'crosswalk_matched'
+            assert decision['track_id'] != first['track_id']
+            if fid > 4:
+                assert decision['reason'] == 'previous_target_retained'
