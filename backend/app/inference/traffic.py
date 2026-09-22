@@ -13,10 +13,13 @@ from typing import Any
 import numpy as np
 
 from .base import InferenceContext, ModelSpec, normalize_box
+from .traffic_geometry import estimate_stripe_direction
+from .traffic_motion import estimate_camera_motion, motion_gray, transform_box
 
 CLASS_NAMES: dict[int, str] = {0: "pedestrian_signal", 1: "crosswalk"}
 SIGNAL_CLASS = "pedestrian_signal"
 CROSSWALK_CLASS = "crosswalk"
+CROSSWALK_CONNECTION_CONFIDENCE = 0.50
 CLASSIFIER_FILENAME = "classifier/best_MobileNet.pt"
 CLASSIFIER_CONFIDENCE = 0.60
 CLASSIFIER_IMAGE_SIZE = 224
@@ -40,69 +43,26 @@ def box_iou(a, b):
 
 
 def estimate_vanishing_point(frame, box, cv2):
-    """Intersect two differently sloped, near-vertical crosswalk edge lines.
+    return estimate_stripe_direction(frame, box, cv2)
 
-    A detector rectangle does not encode a vanishing point. Return None unless
-    image edges provide a geometrically consistent estimate.
-    """
-    height, width = frame.shape[:2]
-    x1, y1, x2, y2 = [int(round(v)) for v in box]
-    x1, y1 = max(0, x1), max(0, y1)
-    x2, y2 = min(width, x2), min(height, y2)
-    if x2 - x1 < 80 or y2 - y1 < 80:
-        return None
-    roi = frame[y1:y2, x1:x2]
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 60, 160)
-    segments = cv2.HoughLinesP(
-        edges, 1, math.pi / 180, threshold=30,
-        minLineLength=max(25, int((y2 - y1) * 0.12)), maxLineGap=15,
-    )
-    if segments is None:
-        return None
-    lines = []
-    for (ax, ay, bx, by) in segments[:, 0]:
-        dx, dy = bx - ax, by - ay
-        if abs(dy) < 25 or abs(dx) > abs(dy) * 0.9:
-            continue
-        if ay > by:
-            ax, ay, bx, by = bx, by, ax, ay
-            dx, dy = -dx, -dy
-        slope = dx / dy
-        lines.append((x1 + ax, y1 + ay, x1 + bx, y1 + by, slope))
-    candidates = []
-    for i, a in enumerate(lines):
-        for b in lines[i + 1:]:
-            if abs(a[4] - b[4]) < 0.12:
-                continue
-            # x = slope*y + intercept
-            intercept_a = a[0] - a[4] * a[1]
-            intercept_b = b[0] - b[4] * b[1]
-            py = (intercept_b - intercept_a) / (a[4] - b[4])
-            px = a[4] * py + intercept_a
-            if (y1 - 0.5 * height <= py <= y1 + 0.4 * (y2 - y1)
-                    and x1 - 0.25 * width <= px <= x2 + 0.25 * width):
-                candidates.append((px, py))
-    if len(candidates) < 3:
-        return None
-    xs = sorted(point[0] for point in candidates)
-    ys = sorted(point[1] for point in candidates)
-    mid = len(candidates) // 2
-    px, py = xs[mid], ys[mid]
-    inliers = sum(math.hypot(x - px, y - py) < 0.08 * width for x, y in candidates)
-    if inliers < 3 or inliers / len(candidates) < 0.6:
-        return None
-    return [float(px), float(py)]
+
+def crosswalk_position(box, width, height):
+    bottom = box[3] / height
+    offset = abs(center(box)[0] - width / 2) / width
+    reasons = []
+    if bottom < 0.55:
+        reasons.append("bottom_too_high")
+    if offset > 0.30:
+        reasons.append("off_center")
+    return bottom, offset, reasons
 
 
 def choose_near_crosswalk(crosswalks, width, height):
     """Prefer the crossing whose near edge is low and centered in the image."""
     candidates = []
     for index, item in enumerate(crosswalks):
-        box = item["xyxy"]
-        bottom = box[3] / height
-        offset = abs(center(box)[0] - width / 2) / width
-        if bottom >= 0.55 and offset <= 0.30:
+        bottom, offset, reasons = crosswalk_position(item["xyxy"], width, height)
+        if not reasons:
             candidates.append((bottom - 0.5 * offset, index))
     if not candidates:
         return None
@@ -112,7 +72,48 @@ def choose_near_crosswalk(crosswalks, width, height):
     return candidates[0][1]
 
 
-def associate(frame, signals, crosswalks, cv2):
+def crosswalk_diagnostics(candidates, crosswalks, association, width, height, signal_count):
+    """Expose detector candidates separately from the unchanged connection filter."""
+    boxes = []
+    qualified_index = 0
+    used_index = association.get("crosswalk_index")
+    eligible_count = 0
+    selected_detection_index = None
+    for item in candidates:
+        bottom, offset, reasons = crosswalk_position(item["xyxy"], width, height)
+        qualified = item["confidence"] >= CROSSWALK_CONNECTION_CONFIDENCE
+        used = qualified and qualified_index == used_index
+        if qualified:
+            qualified_index += 1
+        if not qualified:
+            reasons.insert(0, "below_confidence")
+        eligible_count += not reasons
+        status = ("below_confidence" if not qualified else "position_rejected" if reasons
+                  else "used" if used else "eligible")
+        if used:
+            selected_detection_index = signal_count + len(boxes)
+        boxes.append({
+            "class_id": item["class_id"], "class_name": CROSSWALK_CLASS,
+            "confidence": item["confidence"],
+            "box": normalize_box(*item["xyxy"], width, height), "track_id": None,
+            "extra": {"crosswalk_status": status, "exclusion_reasons": reasons,
+                      "bottom_ratio": bottom, "center_offset_ratio": offset,
+                      "connection_reason": association["reason"] if used else None},
+        })
+    detection_status = ("not_detected" if not candidates else "below_confidence" if not crosswalks
+                        else "position_rejected" if not eligible_count else "eligible")
+    connection_status = association["reason"] or association["status"]
+    if connection_status == "no_unambiguous_near_crosswalk":
+        connection_status = "ambiguous_crosswalks" if eligible_count else "not_attempted"
+    return boxes, {
+        "detection_status": detection_status, "connection_status": connection_status,
+        "candidate_count": len(candidates), "qualified_count": len(crosswalks),
+        "eligible_count": eligible_count, "selected_detection_index": selected_detection_index,
+        "connection_confidence": CROSSWALK_CONNECTION_CONFIDENCE,
+    }
+
+
+def associate(frame, signals, crosswalks, cv2, *, require_geometry=False):
     """Return a frame decision with a signal index or an explicit unknown reason."""
     height, width = frame.shape[:2]
     decision = {"status": "unknown", "reason": None, "crosswalk_index": None,
@@ -120,7 +121,7 @@ def associate(frame, signals, crosswalks, cv2):
     if not signals:
         decision["reason"] = "no_signal_detected"
         return decision
-    if len(signals) == 1:
+    if len(signals) == 1 and not require_geometry:
         decision["status"] = "single_signal"
         decision["reason"] = "crosswalk_relation_unverified"
         decision["signal_index"] = 0
@@ -172,23 +173,189 @@ def associate(frame, signals, crosswalks, cv2):
 
 
 class TemporalSelector:
+    # 초기 추적 기준. 검출 신뢰도 대신 연속 프레임의 위치와 크기를 비교한다.
+    TRACK_MIN_IOU = 0.20
+    TRACK_MAX_CENTER_DISTANCE = 0.50  # 이전 박스 대각선 길이에 대한 비율
+    TRACK_MAX_SIZE_RATIO = 2.0
+    TRACK_SCORE_MARGIN = 0.15
+    TRACK_MAX_GAP_MS = 1000
+
     def __init__(self, required_frames=3):
         self.required_frames = required_frames
+        self.target_box = None
+        self.target_origin = None
+        self.target_id = None
+        self.next_target_id = 1
+        self.previous_context = None
+        self.previous_shape = None
+        self.previous_gray = None
+        self.target_needs_revalidation = False
+        self._clear_pending()
+
+    def _clear_pending(self):
         self.last_box = None
         self.last_crosswalk = None
         self.streak = 0
 
+    def _clear_target(self):
+        self.target_box = None
+        self.target_origin = None
+        self.target_id = None
+        self.target_needs_revalidation = False
+
+    def _acquire_target(self, decision, signals, origin):
+        self.target_box = list(signals[decision["signal_index"]]["xyxy"])
+        self.target_origin = origin
+        self.target_id = self.next_target_id
+        self.next_target_id += 1
+        self.target_needs_revalidation = False
+        decision.update(selection_origin=self.target_origin, track_id=self.target_id)
+
+    def _reconsider_target(self, decision, index, signals, crosswalks, tracking):
+        """A geometric challenger must persist; contradictions suspend color output.
+
+        Keep the observed incumbent internally while confirming a challenger.
+        Once contradicted, missing geometry or a single detection cannot silently
+        restore its color: require three consistent geometric observations.
+        """
+        tracking["revalidation_status"] = decision["status"]
+        tracking["revalidation_reason"] = decision["reason"]
+        if decision["status"] == "candidate":
+            challenger = decision["signal_index"]
+            if challenger == index and not self.target_needs_revalidation:
+                self._clear_pending()
+                # Preserve the original acquisition evidence; one observation
+                # does not upgrade a single-signal acquisition to a verified link.
+                return None
+            self.target_needs_revalidation = True
+            decision = self.update(decision, signals, crosswalks)
+            switching = challenger != index
+            tracking["target_change"] = {
+                "state": "confirmed" if decision["signal_index"] is not None else "pending",
+                "previous_track_id": self.target_id,
+                "candidate_signal_index": challenger,
+                "stable_frames": decision["stable_frames"],
+                "switching": switching,
+            }
+            if decision["signal_index"] is None:
+                decision["reason"] = ("waiting_for_target_switch" if switching
+                                      else "waiting_for_target_revalidation")
+            elif switching:
+                self._acquire_target(decision, signals, "crosswalk_matched")
+                decision["reason"] = "target_switched"
+                self._clear_pending()
+            else:
+                self.target_needs_revalidation = False
+                self.target_origin = "crosswalk_matched"
+                decision.update(status="tracked", reason="target_revalidated",
+                                track_id=self.target_id, selection_origin=self.target_origin)
+                self._clear_pending()
+        else:
+            self._clear_pending()
+            # Failure to extract geometry alone is not evidence for a different
+            # target. Explicit direction conflicts, however, must suppress output.
+            conflict = decision["reason"] in {"ambiguous_signals", "no_signal_in_crossing_direction"}
+            if not self.target_needs_revalidation and not conflict:
+                return None
+            self.target_needs_revalidation = True
+            tracking["target_change"] = {"state": "blocked", "previous_track_id": self.target_id}
+        decision["tracking"] = tracking
+        return decision
+
+    def _match_target(self, signals):
+        box = self.target_box
+        width, height = box[2] - box[0], box[3] - box[1]
+        if min(width, height) <= 0:
+            return None, {"reason": "target_missing"}
+        ranked = []
+        for index, signal in enumerate(signals):
+            other = signal["xyxy"]
+            ow, oh = other[2] - other[0], other[3] - other[1]
+            if min(ow, oh) <= 0:
+                continue
+            size_ratio = max(width / ow, ow / width, height / oh, oh / height,
+                             width * height / (ow * oh), ow * oh / (width * height))
+            iou = box_iou(box, other)
+            distance = math.dist(center(box), center(other)) / math.hypot(width, height)
+            if (iou >= self.TRACK_MIN_IOU and distance <= self.TRACK_MAX_CENTER_DISTANCE
+                    and size_ratio <= self.TRACK_MAX_SIZE_RATIO):
+                ranked.append((iou - 0.25 * distance, index, iou, distance))
+        ranked.sort(reverse=True)
+        if not ranked:
+            return None, {"reason": "target_missing"}
+        if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < self.TRACK_SCORE_MARGIN:
+            return None, {"reason": "ambiguous_match"}
+        _, index, iou, distance = ranked[0]
+        return index, {"reason": "matched", "iou": round(iou, 4),
+                       "center_distance": round(distance, 4)}
+
+    def select(self, frame, signals, crosswalks, cv2, context):
+        """Track visible targets and recheck crossing geometry for alternatives.
+
+        No box or color is emitted from history. Missing/ambiguous matches end
+        the track and return to the original per-frame acquisition procedure.
+        """
+        previous = self.previous_context
+        continuous = previous is None or (
+            context.frame_id == previous.frame_id + 1
+            and 0 <= context.captured_at_ms - previous.captured_at_ms <= self.TRACK_MAX_GAP_MS
+            and frame.shape[:2] == self.previous_shape
+        )
+        tracking = {"reason": "no_previous_target" if continuous else "discontinuous_frames"}
+        if not continuous:
+            self._clear_target()
+            self._clear_pending()
+            self.previous_gray = None
+        gray = motion_gray(frame, cv2)
+        motion, motion_diagnostic = estimate_camera_motion(
+            self.previous_gray, gray, frame.shape[:2], cv2,
+        ) if self.target_box is not None or self.last_box is not None else (
+            None, {"reason": "no_previous_candidate"}
+        )
+        self.previous_gray = gray
+        self.target_box = transform_box(self.target_box, motion)
+        self.last_box = transform_box(self.last_box, motion)
+        self.last_crosswalk = transform_box(self.last_crosswalk, motion)
+        self.previous_context = context
+        self.previous_shape = frame.shape[:2]
+
+        if self.target_box is not None:
+            index, tracking = self._match_target(signals)
+            tracking.update(previous_frame_id=previous.frame_id, previous_track_id=self.target_id)
+            tracking["camera_motion"] = motion_diagnostic
+            if index is not None:
+                self.target_box = list(signals[index]["xyxy"])
+                geometry = None
+                if len(signals) > 1 or self.target_needs_revalidation:
+                    geometry = associate(frame, signals, crosswalks, cv2, require_geometry=True)
+                    reconsidered = self._reconsider_target(geometry, index, signals, crosswalks, tracking)
+                    if reconsidered is not None:
+                        return reconsidered
+                self._clear_pending()
+                return {"status": "tracked", "reason": "previous_target_retained",
+                        "signal_index": index,
+                        "crosswalk_index": geometry.get("crosswalk_index") if geometry else None,
+                        "selection_origin": self.target_origin, "track_id": self.target_id,
+                        "tracking": tracking}
+            self._clear_target()
+            self._clear_pending()
+
+        decision = associate(frame, signals, crosswalks, cv2)
+        tracking["camera_motion"] = motion_diagnostic
+        single = decision["status"] == "single_signal"
+        decision = self.update(decision, signals, crosswalks)
+        decision["tracking"] = tracking
+        if decision["signal_index"] is not None:
+            self._acquire_target(decision, signals, "single_signal" if single else "crosswalk_matched")
+        return decision
+
     def update(self, decision, signals, crosswalks):
         index = decision["signal_index"]
         if decision["status"] == "single_signal":
-            self.last_box = None
-            self.last_crosswalk = None
-            self.streak = 0
+            self._clear_pending()
             return decision
         if decision["status"] != "candidate" or index is None:
-            self.last_box = None
-            self.last_crosswalk = None
-            self.streak = 0
+            self._clear_pending()
             return decision
         box = signals[index]["xyxy"]
         crosswalk_box = crosswalks[decision["crosswalk_index"]]["xyxy"]
@@ -310,11 +477,12 @@ class TrafficPipeline:
         height, width = frame_bgr.shape[:2]
         result = self.model.predict(
             source=frame_bgr, imgsz=960, conf=context.confidence,
-            device=self.device, verbose=False, save=False, stream=False,
+            device=self.device, quantize=32, verbose=False, save=False, stream=False,
         )[0]
         labels = {int(cid): str(name).strip().lower() for cid, name in result.names.items()}
         signals: list[dict[str, Any]] = []
         crosswalks: list[dict[str, Any]] = []
+        crosswalk_candidates: list[dict[str, Any]] = []
         if result.boxes is not None:
             boxes = result.boxes.cpu()
             for xyxy, score, class_id in zip(
@@ -325,38 +493,56 @@ class TrafficPipeline:
                         "confidence": float(score), "xyxy": [float(v) for v in xyxy]}
                 if item["class_name"] == SIGNAL_CLASS:
                     signals.append(item)
-                elif item["class_name"] == CROSSWALK_CLASS and score >= 0.50:
-                    crosswalks.append(item)
+                elif item["class_name"] == CROSSWALK_CLASS:
+                    crosswalk_candidates.append(item)
+                    if score >= CROSSWALK_CONNECTION_CONFIDENCE:
+                        crosswalks.append(item)
 
         selector = self._selectors.setdefault(context.session_id, TemporalSelector(required_frames=3))
-        association = selector.update(associate(frame_bgr, signals, crosswalks, cv2), signals, crosswalks)
+        association = selector.select(frame_bgr, signals, crosswalks, cv2, context)
         selected_index = association.get("signal_index")
-        provisional = selected_index is None and association.get("candidate_signal_index") is not None
-        if provisional:
-            selected_index = association["candidate_signal_index"]
+        candidate_index = association.get("candidate_signal_index")
         detections: list[dict[str, Any]] = []
         signal_state = "unknown"
-        if selected_index is not None:
-            selected = signals[selected_index]
-            if provisional:
-                color, color_confidence = "unknown", None
-            else:
-                color, color_confidence = self._classify(frame_bgr, selected["xyxy"])
+        # 검출 목록은 대상 선택 성공 여부와 무관하게 보존한다.
+        # 색상 분류와 최종 안내 상태는 선택이 완료된 신호등에만 적용한다.
+        for index, signal in enumerate(signals):
+            color, color_confidence = "unknown", None
+            selection_status = "unselected"
+            if index == selected_index:
+                selection_status = "selected"
+                color, color_confidence = self._classify(frame_bgr, signal["xyxy"])
                 signal_state = color
-            x1, y1, x2, y2 = selected["xyxy"]
+            elif index == candidate_index:
+                selection_status = "candidate"
+            x1, y1, x2, y2 = signal["xyxy"]
             detections.append({
-                "class_id": selected["class_id"],
-                "class_name": selected["class_name"],
-                "confidence": selected["confidence"],
+                "class_id": signal["class_id"],
+                "class_name": signal["class_name"],
+                "confidence": signal["confidence"],
                 "box": normalize_box(x1, y1, x2, y2, width, height),
-                "track_id": None,
+                "track_id": association.get("track_id") if index == selected_index else None,
                 "extra": {"signal_state": color, "color_confidence": color_confidence,
+                          "selection_status": selection_status,
                           "association_status": association["status"]},
             })
+        # Append crosswalks after signals so existing signal indices stay valid.
+        crosswalk_boxes, diagnostics = crosswalk_diagnostics(
+            crosswalk_candidates, crosswalks, association, width, height, len(signals),
+        )
+        detections.extend(crosswalk_boxes)
+        diagnostics["detector_confidence"] = context.confidence
         return {"detections": detections, "event": {
             "type": "traffic_signal", "signal_state": signal_state,
             "association_status": association["status"],
             "association_reason": association["reason"],
+            "selection_origin": association.get("selection_origin"),
+            "tracking": association.get("tracking"),
+            # 현재 프레임 detections의 인덱스이며, 프레임 간 추적 ID는 아니다.
+            "selected_detection_index": selected_index,
+            "candidate_detection_index": candidate_index,
             "detected_signal_count": len(signals),
             "detected_crosswalk_count": len(crosswalks),
+            "crosswalk_candidate_count": len(crosswalk_candidates),
+            "crosswalk_diagnostics": diagnostics,
         }}

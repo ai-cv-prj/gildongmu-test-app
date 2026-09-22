@@ -15,8 +15,9 @@
     alert: $("alert"),
   };
 
-  // 처리 가능한 만큼만 전송한다. 상한은 10FPS지만 요청은 항상 하나씩 보낸다.
+  // 기능별로 검증한 입력 크기와 전송 상한을 유지한다. 요청은 항상 하나씩 보낸다.
   const SETTINGS = { confidence: 0.4, image_max_side: 640, target_fps: 10, jpeg_quality: 0.8, timeout_ms: 5000, retry_wait_ms: 500 };
+  const TRAFFIC_SETTINGS = { confidence: 0.25, image_max_side: 960, target_fps: 5 };
   const MODE_LABEL = { traffic: "신호등", walking: "도보 장애물", bus: "버스" };
 
   const state = {
@@ -66,6 +67,20 @@
     if (ev.type === "traffic_signal") {
       tone = ev.signal_state === "green" ? "green" : ev.signal_state === "red" ? "red" : "";
       text = { green: "초록불", red: "빨간불", unknown: "신호 인식 안 됨" }[ev.signal_state] || "";
+      // 새 응답에서는 검출 성공과 안내 대상 선택 성공을 구분한다.
+      if (Object.prototype.hasOwnProperty.call(ev, "selected_detection_index")) {
+        const count = ev.detected_signal_count ?? dets.filter(d => d.class_name === "pedestrian_signal").length;
+        let detail;
+        if (!count) detail = "신호등 검출 없음";
+        else if (ev.selected_detection_index != null) {
+          detail = ev.signal_state === "unknown" ? "안내 대상 색상 미확인" : `안내 대상 ${text}`;
+        } else {
+          detail = ev.candidate_detection_index != null ? "안내 대상 선택 확인 중" : "안내 대상 선택 불가";
+        }
+        text = count ? `신호등 ${count}개 검출 · ${detail}` : detail;
+      }
+      const crosswalkText = GOverlay.describeCrosswalkEvent(ev);
+      if (crosswalkText) text += ` / ${crosswalkText}`;
     } else if (ev.type === "walking_warning") {
       if (ev.warning) { tone = "warn"; text = ev.warning_text || "장애물 주의"; }
     } else if (ev.type === "bus_detection") {
@@ -179,13 +194,15 @@
     showAlert(null);
     el.summary.hidden = true;
     el.btnStart.disabled = true;
+    const settings = { ...SETTINGS, ...(state.mode === "traffic" ? TRAFFIC_SETTINGS : {}) };
     const body = {
       mode: state.mode,
       model_id: el.modelSelect.value,
       device_type: currentDevice(),
       note: el.note.value.trim(),
-      settings: { confidence: SETTINGS.confidence, image_max_side: SETTINGS.image_max_side, target_fps: SETTINGS.target_fps, jpeg_quality: SETTINGS.jpeg_quality },
-      client: { user_agent: navigator.userAgent, screen_width: screen.width, screen_height: screen.height, platform: navigator.platform || "", app_version: "latency-v3-cleanup" },
+      settings: { confidence: settings.confidence, image_max_side: settings.image_max_side,
+        target_fps: settings.target_fps, jpeg_quality: settings.jpeg_quality },
+      client: { user_agent: navigator.userAgent, screen_width: screen.width, screen_height: screen.height, platform: navigator.platform || "", app_version: "sesac-73-latency-v3" },
     };
     try {
       const r = await GApi.createSession(body);
@@ -210,7 +227,7 @@
       }
       refreshButtons();
       window.scrollTo({ top: 0, behavior: "smooth" });
-      state.loopTask = loop(r.session_id, state.timings);
+      state.loopTask = loop(r.session_id, state.timings, settings);
     } catch (e) {
       if (e.code === "session_conflict" && e.detail && e.detail.active_session) {
         showAlert(`이미 실행 중인 세션이 있습니다 (${e.detail.active_session.id}). 서버에서 종료 후 다시 시도하세요.`);
@@ -271,8 +288,8 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /** 한 번에 한 프레임을 보내며 각 단계의 브라우저 시간을 기록한다. */
-  async function loop(sessionId, timings) {
-    const interval = 1000 / SETTINGS.target_fps;
+  async function loop(sessionId, timings, settings) {
+    const interval = 1000 / settings.target_fps;
     let paused = false;
     let previousCapture = null;
     while (state.running) {
@@ -296,7 +313,7 @@
       previousCapture = t0;
       let drawing;
       try {
-        const blob = await GCamera.capture(SETTINGS.image_max_side, SETTINGS.jpeg_quality);
+        const blob = await GCamera.capture(settings.image_max_side, settings.jpeg_quality);
         row.capture_ms = performance.now() - t0;
         row.capture_backend = GCamera.captureBackend?.() || "canvas";
         row.jpeg_bytes = blob?.size || 0;

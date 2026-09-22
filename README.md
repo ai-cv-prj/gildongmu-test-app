@@ -7,7 +7,7 @@ Gildongmu 모델을 **휴대폰 카메라로 실시간 테스트**하는 팀 내
 - 테스트 시작부터 종료까지 전송된 모든 프레임과 추론 결과가 **본인 PC의 폴더에 자동 저장**됩니다.
 - 모델이 없어도 Mock(가짜 박스) 모델로 전체 흐름을 먼저 확인할 수 있습니다.
 
-저장소에는 뼈대만 들어 있습니다. **모델 가중치와 추론 코드는 각자 본인 PC에서 넣습니다.**
+신호등 검출·선택·추적·색상 분류와 보행 영역 추론 코드가 포함되어 있습니다. **모델 가중치는 각자 본인 PC에 넣습니다.** 버스 추론은 기능별 파이프라인에 구현합니다.
 
 ```text
  본인 휴대폰                         본인 PC (GPU)
@@ -125,6 +125,32 @@ https://random-words-here.trycloudflare.com
 
 테스트 중에는 기능과 모델을 바꿀 수 없습니다. 바꾸려면 종료한 뒤 다시 시작합니다. 화면을 끄거나 다른 앱으로 넘어가면 전송이 일시정지되고, 돌아오면 이어집니다.
 
+신호등 실제 모델은 검출한 신호등을 모두 표시합니다. 파란 박스는 미선택 신호등, 노란 박스는 선택 확인 중인 후보이며, 최종 안내 대상은 굵은 박스와 `안내 대상` 문구로 구분합니다. 색상 판별은 최종 선택 대상에만 적용합니다. `신호등 2개 검출 · 안내 대상 선택 불가`는 검출에는 성공했지만 안내할 대상을 정하지 못했다는 뜻입니다.
+
+선택 흐름·설정값·검증 결과·남은 한계는 [신호등 모듈 문서](docs/traffic-signal.md)에 정리했습니다.
+
+새 테스트의 `results.jsonl`에는 모든 신호등 박스와 `extra.selection_status`(`unselected` / `candidate` / `selected`)가 저장됩니다. `event.selected_detection_index`와 `candidate_detection_index`는 해당 프레임의 `detections` 목록을 가리키며, 대상이 없으면 `null`입니다. 기존 기록에 저장되지 않은 박스는 원본 프레임을 다시 추론해야 확인할 수 있습니다.
+
+횡단보도는 보라색 bbox와 검출 신뢰도로 표시합니다. 해당 프레임의 연결 판단에 사용된 박스는 청록색이며, 사용됐다는 표시만으로 신호등 연결이 성공했다는 뜻은 아닙니다. 연결 신뢰도 기준(0.50) 미달 후보와 위치 조건 탈락 박스도 화면에 남기고 사유를 표시합니다. 표시되는 후보는 모델이 앱의 검출 신뢰도 기준(기본 0.25)으로 반환한 범위입니다. 모델 단계에서 제거된 후보까지 표시하지는 않습니다. 화면 하단에서 미검출, 신뢰도 미달, 위치 탈락, 횡단보도 선택 모호, 방향 확인 불가, 신호등 연결 실패·확인 중을 구분할 수 있습니다. 단일 신호등 판별이나 기존 대상 추적 중에는 그 상태를 따로 표시합니다.
+
+횡단보도 박스는 `detections`의 신호등 목록 뒤에 `class_name="crosswalk"`로 저장하므로 신호등 선택 인덱스는 유지됩니다. `extra.crosswalk_status`는 `below_confidence` / `position_rejected` / `eligible` / `used`, `exclusion_reasons`는 `below_confidence` / `bottom_too_high` / `off_center` 사유 목록입니다. `event.crosswalk_diagnostics`에는 검출·연결 상태와 사용된 횡단보도의 `detections` 인덱스가 저장됩니다. `crosswalk_candidate_count`는 표시 후보 수이며, 기존 `detected_crosswalk_count`는 0.50 이상 후보 수를 유지합니다. 신호등 개수는 전체 박스 수가 아니라 `detected_signal_count`를 사용합니다.
+
+선택한 신호등이 다음 프레임에서도 비슷한 위치와 크기로 검출되면 같은 대상으로 추적합니다. 여러 신호등이 보이면 추적 중에도 횡단보도 연결을 다시 검사합니다. 신호등이 1개에서 2개로 늘어나거나 검출 신뢰도 순서가 바뀌어도, 이전 대상과의 박스 겹침·중심 이동·크기를 우선 비교합니다. 초기 추적 기준은 IoU 0.20 이상, 중심 이동은 이전 박스 대각선의 0.50 이하, 가로·세로·면적 변화는 각각 2배 이내이며, 상위 두 후보의 점수 차이가 0.15 미만이면 유지하지 않습니다. 점수는 `IoU - 0.25 × 중심 이동 비율`입니다. 현재 프레임에서 검출된 대상만 추적하며 최종 선택된 대상의 색상은 매번 새로 분류합니다.
+
+화면 흔들림은 이전·현재 영상의 특징점 이동으로 보정합니다. 왕복 광류 검사와 RANSAC을 통과한 점이 화면 여러 영역에 분포하고 충분히 일치할 때만, 이전 신호등·횡단보도 박스를 현재 화면 위치로 옮겨 비교합니다. 보정이 불확실하면 기존 좌표 비교를 사용합니다. 이 보정은 추적 대상 유지와 연속 후보 확인 모두에 적용되며, 사라진 검출이나 과거 색상을 복원하지 않습니다. `event.tracking.camera_motion`에 보정 여부·실패 사유·일치점 수가 기록됩니다.
+
+처음부터 여러 신호등이 보이거나 추적하던 대상을 놓치면 기존 선택 절차를 사용합니다. 여러 개일 때는 횡단보도 방향 추정과 연속 3프레임 확인을 적용하고, 하나일 때는 기존처럼 바로 판별하되 이전 대상과 일치하지 않으면 새 대상 번호를 부여합니다. 프레임 번호 누락·역순, 촬영 시각 역순·1초 초과 간격, 해상도 변경 시에는 추적 및 후보 상태를 초기화하고 최초 선택 절차부터 시작합니다. 횡단보도 신뢰도 기준은 0.50입니다.
+
+방향 추정은 횡단보도 bbox 안의 밝고 긴 도색 줄무늬를 추출하고, 반복되는 줄무늬 끝점으로 경계선을 맞춥니다. 각 경계선은 최소 3개 줄무늬의 지지가 필요하며, 화면이나 bbox에 잘린 끝점은 제외합니다. 두 경계선의 교점이 불안정하거나 비슷한 근거의 서로 다른 방향이 나오면 선택을 확정하지 않습니다. 가림·그림자·희미한 도색에서 여전히 실패할 수 있는 영상 기반 휴리스틱이며, 사용자가 건널 횡단보도나 정답 신호등을 보장하지 않습니다.
+
+다른 신호등이 횡단보도 연결 후보가 되면 즉시 기존 색상 출력을 보류하고, 같은 신호등과 횡단보도를 3프레임 연속 확인한 뒤 새 `track_id`로 변경합니다(`target_switched`). 확인 중에는 `waiting_for_target_switch`와 후보 박스를 표시하며 최종 상태는 `unknown`입니다. 방향 후보가 모호하거나 현재 방향에 맞는 신호등이 없을 때도 색상을 보류합니다. 충돌이 발생한 뒤에는 방향 추정 실패나 단일 검출로 돌아갔다는 이유만으로 기존 색상을 복구하지 않습니다. 기존 대상이 다시 3프레임 연속 연결되면 같은 `track_id`로 복구합니다(`target_revalidated`). 후보나 횡단보도가 바뀌거나 연결이 끊기면 연속 확인을 다시 시작합니다.
+
+횡단보도 미검출·방향 계산 실패만 발생했고 아직 연결 충돌이 없으면 현재 보이는 기존 대상을 유지합니다. 이는 구간 연결이 검증됐다는 뜻은 아닙니다. 최초 단일 신호등 즉시 선택, 일자형 다구간 횡단보도의 구분 한계는 남아 있습니다. `event.tracking.revalidation_status/revalidation_reason`에 재검사 결과, `target_change`에 변경 확인 상태·이전 대상 번호·후보 인덱스·연속 확인 수를 기록합니다.
+
+유지된 대상은 `event.association_status="tracked"`, `association_reason="previous_target_retained"`로 기록합니다. 선택된 박스의 `track_id`는 해당 세션 안에서 유지되는 대상 번호이고 미선택 박스는 `null`입니다. `event.selection_origin`은 선택 근거(`single_signal` / `crosswalk_matched`)이며, 3프레임 재확인에 성공한 기존 대상도 `crosswalk_matched`로 갱신됩니다. `event.tracking`은 연결 여부와 겹침·이동량을 기록합니다. 단일 신호등에서 시작한 추적은 횡단보도와의 연결이 검증됐다는 뜻이 아닙니다.
+
+
+
 ### 화면에 나오는 숫자
 
 | 항목 | 의미 |
@@ -132,7 +158,7 @@ https://random-words-here.trycloudflare.com
 | 추론 | 모델 `infer()` 에 걸린 시간 |
 | 서버 처리 | 서버의 디코딩 + 추론 + 원본 이미지 저장 시간. 결과 로그·요약 저장, 응답 전송은 제외 |
 | 왕복 | 휴대폰의 캡처 시작부터 결과 수신·JSON 해석까지. JPEG 생성, 서버 처리, 통신이 포함되며 마스크 그리기는 제외 |
-| 수신 FPS | 최근 3초 동안 초당 받은 결과 수. 전송 상한은 10이며 실제 속도는 처리·통신 시간에 따라 달라집니다. |
+| 수신 FPS | 최근 3초 동안 초당 받은 결과 수. 전송 상한은 신호등 5, 나머지 기능 10이며 실제 속도는 처리·통신 시간에 따라 달라집니다. |
 | 전송 프레임 / 실패 | 이번 테스트에서 성공한 수와 실패한 수 |
 
 끝낼 때는 두 터미널에서 각각 `Ctrl+C` 를 누릅니다. **터널은 테스트가 끝나면 꼭 끄세요** (4장 참고).
@@ -284,11 +310,11 @@ class TrafficPipeline:
 | 규칙 | 설명 |
 | --- | --- |
 | 입력은 **OpenCV BGR** `numpy` 배열 | 모델이 RGB 를 요구하면 `cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)` 로 직접 변환하세요. ultralytics 는 BGR 배열을 그대로 받습니다. |
-| 입력 크기는 매번 다를 수 있음 | 기본 전송 크기는 긴 변 최대 640px 이고 세로 영상도 옵니다. `h, w` 를 매 프레임 읽으세요. |
+| 입력 크기는 매번 다를 수 있음 | 기본 전송 크기는 긴 변 최대 신호등 960px, 나머지 기능 640px 이고 세로 영상도 옵니다. `h, w` 를 매 프레임 읽으세요. |
 | 좌표는 **0~1 정규화 xyxy** | 픽셀 좌표는 `normalize_box(x1, y1, x2, y2, w, h)` 로 변환합니다. xywh 나 중심 좌표 형식이면 먼저 xyxy 로 바꾸세요. |
 | 값은 **파이썬 기본 타입** | tensor 나 numpy 값은 `float()`, `int()` 로 변환합니다. 안 하면 저장 단계에서 오류가 납니다. |
 | `load()` 에서만 모델 로딩 | `infer()` 안에서 매번 로딩하면 프레임마다 몇 초씩 걸립니다. |
-| 신뢰도 기준은 `context.confidence` | 화면 기본값은 0.4 입니다. |
+| 신뢰도 기준은 `context.confidence` | 기본값은 신호등 0.25, 나머지 기능 0.4 입니다. |
 
 기능별 `event` 형식:
 
@@ -334,7 +360,7 @@ def reset_session(self, session_id):
 - `[실패]` 가 나오면 어느 단계에서 무엇이 틀렸는지 알려줍니다. 예: 좌표가 0~1 을 벗어남, tensor 를 변환하지 않음.
 - `check_output/` 에 저장된 이미지를 열어 **박스 위치가 맞는지 눈으로 확인**하세요. 위치가 어긋나면 좌표 형식(xyxy / xywh)이나 정규화가 틀린 것입니다.
 - 특정 가중치를 지정하려면 `--model traffic-best-v2` 를 붙입니다. ID 는 `--list` 로 확인합니다.
-- "이후 평균" 시간이 100ms 를 넘으면 추론만으로도 전송 상한인 10FPS 를 못 따라갑니다. 실제 속도에는 캡처·저장·통신 시간도 포함됩니다. GPU 사용 여부도 확인하세요.
+- "이후 평균" 시간이 100ms 를 넘으면 추론만으로도 10FPS 모드의 전송 상한을 못 따라갑니다. 신호등 모드는 상한 5FPS이므로 200ms와 비교하세요. 실제 속도에는 캡처·저장·통신 시간도 포함됩니다. GPU 사용 여부도 확인하세요.
 
 ### 5-5. 휴대폰으로 실제 테스트
 
@@ -354,12 +380,15 @@ backend/data/sessions/
    ├─ frames/00000001.jpg ...                 휴대폰이 보낸 입력 프레임
    ├─ results.jsonl                           프레임당 한 줄의 서버 추론 결과
    ├─ client_timings.jsonl                    프레임당 한 줄의 휴대폰 지연 측정값
-   └─ realtime_overlay.webm                   테스트 종료 시 업로드하는 실시간 탐지 녹화
+   ├─ realtime_overlay.webm                   테스트 종료 시 업로드하는 실시간 탐지 녹화
+   └─ annotated/results.mp4                   종료 후 생성되는 탐지 결과 영상
 ```
 
 - **manifest.json**: 기기, 메모, 기능, 모델 ID, 가중치 파일 이름과 해시, 시작·종료 시각, 상태, 프레임 수, 실패 수, 평균·p95 처리 시간, 전송 설정, 휴대폰 브라우저 정보.
-- **frames/**: 초당 최대 10장, 긴 변 최대 640px JPEG. 파일 번호가 프레임 번호입니다. 박스가 그려지지 않은 원본이라 다른 가중치로 다시 추론해 볼 수 있습니다.
+- **frames/**: 신호등은 초당 최대 5장·긴 변 최대 960px, 나머지 기능은 초당 최대 10장·긴 변 최대 640px JPEG. 파일 번호가 프레임 번호입니다. 박스가 그려지지 않은 원본이라 다른 가중치로 다시 추론해 볼 수 있습니다.
 - **results.jsonl**: 프레임 번호, 촬영 시각, 서버 수신 시각, 이미지 크기, 검출 목록, event, 단계별 처리 시간, 이미지 경로. 실패한 프레임은 `error` 에 원인이 남습니다.
+- **annotated/results.mp4**: 앱에서 테스트 종료를 누르면 서버가 탐지 박스와 상태를 그린 영상을 백그라운드에서 만듭니다. 프레임 처리 중에는 영상을 인코딩하지 않습니다. 영상은 오디오 없이 `manifest.json`의 `target_fps`로 재생됩니다. `SAVE_FRAMES=false`이거나 저장된 프레임이 없으면 만들지 않습니다.
+- **video_status**: 세션 조회 API와 `manifest.json`에서 `pending`(변환 중), `ready`(완료), `failed`(실패), `no_frames`(저장된 프레임 없음)를 확인합니다. 서버가 변환 도중 재시작되면 `pending` 영상을 다시 생성합니다. 변환 실패 원인은 `manifest.json`의 `video_error`에 남습니다. 변환 중 바로 다음 테스트를 시작하면 CPU·디스크 사용이 겹칠 수 있습니다.
 - **client_timings.jsonl**: 아래 표의 휴대폰 측정값. 2.5초마다 최대 25건씩 전송하며, 테스트 종료 시 마지막 기록까지 저장합니다. 새 테스트부터 생성됩니다.
 - 상태는 `running` / `completed` / `aborted` 입니다. 서버가 테스트 도중 꺼지면 다음에 켤 때 `aborted` 로 바뀌고, 그때까지 받은 프레임은 그대로 남아 있습니다.
 - **폴더가 곧 기록입니다.** 필요 없는 테스트는 폴더를 지우면 되고, 팀에 공유할 때는 폴더를 압축해 보내면 됩니다.
@@ -390,22 +419,30 @@ backend/data/sessions/
 - 저장 실패 시 화면에 알리고 같은 묶음을 재시도합니다. 응답만 유실되면 같은 줄이 중복 저장될 수 있으므로 분석 시 `(session_id, frame_id)`로 중복을 제거합니다. 오프라인 대기열은 최대 500건(+전송 중 25건)이며 초과 누락은 경고와 `dropped_records`에 남습니다.
 - **테스트 종료 후 저장 완료를 확인하고 페이지를 닫으세요.** 강제 종료 시 아직 업로드하지 않은 로그는 유실될 수 있습니다. 로그 업로드 자체에도 소량의 통신·저장 비용이 있습니다.
 
-현재 버전은 `latency-v3-cleanup`이며 `manifest.json`의 `client.app_version`에 기록됩니다. 지연 로그 수집·전송은 `api.js`의 `GApi.createTimings()`가 담당합니다.
+현재 버전은 `sesac-73-latency-v3`이며 `manifest.json`의 `client.app_version`에 기록됩니다. 지연 로그 수집·전송은 `api.js`의 `GApi.createTimings()`가 담당합니다.
 
 - 캡처는 VideoFrame → Worker를 우선 사용하고, 생성 미지원 시 ImageBitmap → Worker, Worker 실패 시 기존 canvas 경로로 전환합니다.
 - 보행 마스크는 `event.mask_rle`로 픽셀을 복원합니다. 라벨·해상도·경계·색상·투명도는 그대로이며, 4096구간 초과 마스크와 이전 PNG 결과는 `mask_png` 경로로 표시합니다.
 - `mask_rle`의 필드는 `width`, `height`, `data`입니다. `data`는 little-endian uint32 배열의 Base64 문자열로, 하위 2비트는 색(0=투명, 1=초록, 2=핑크), 나머지는 연속 픽셀 수입니다. 행 우선으로 복원하며 RGBA는 `(0,0,0,0)`, `(0,255,0,140)`, `(255,105,180,140)`입니다. `results.jsonl`에도 같은 데이터가 저장됩니다.
-- 전송은 최대 10FPS·640px·JPEG 품질 0.8이며 한 번에 한 장만 처리합니다. 모델 가중치·연산 정밀도, 원본 저장, 실시간 탐지 녹화(합성 30FPS)를 유지하고 영상 자체를 늦추지는 않습니다.
+- 전송은 신호등 최대 5FPS·960px, 나머지 기능 최대 10FPS·640px이며 JPEG 품질은 모두 0.8입니다. 요청은 한 번에 한 장만 처리합니다. 모델 가중치·연산 정밀도, 원본 저장, 실시간 탐지 녹화(합성 30FPS)를 유지하고 영상 자체를 늦추지는 않습니다.
 
 변경 적용 시 테스트 종료 → 서버 재시작 → **폰 페이지 새로고침**을 하세요. RLE 지원 전 프런트엔드는 새 마스크를 표시하지 못합니다. 적용 여부는 `client.app_version`, `settings.target_fps`, `capture_backend`, `event.mask_rle`/`mask_png`로, 실제 지연은 위 표의 전체 지연·갱신 간격·이전 마스크 나이로 확인합니다.
 
-저장된 프레임에 탐지 결과를 그려 보려면 아래 명령을 실행하세요. 원본 `frames/`는 그대로 두고 `annotated/`에 프레임별 사진과 `contact_sheet.jpg`(전체 모음)를 만듭니다. 탐지하지 못한 프레임에는 `NO DETECTION`이 표시됩니다.
+### 프레임별 결과 시각화
+
+프레임별 결과 사진도 필요하면 아래 명령을 실행하세요. 원본 `frames/`는 그대로 두고 `annotated/`에 프레임별 사진과 `results.mp4`를 만듭니다. Contact sheet는 저장하지 않습니다. 탐지하지 못한 프레임에는 `NO DETECTION`이 표시됩니다.
 
 ```bash
 .venv/bin/python scripts/visualize_session.py backend/data/sessions/<세션 ID>
 ```
 
-화면에 그리는 박스는 `results.jsonl`의 `detections` 목록입니다. 신호등 모델의 `detected_crosswalk_count`는 감지 개수만 기록하므로 횡단보도 박스는 표시되지 않습니다.
+여러 세션을 순서대로 하나의 영상으로 이어 붙이려면 `--combine`을 사용합니다. 세션 시작 부분에는 구분 화면이 들어갑니다.
+
+```bash
+.venv/bin/python scripts/visualize_session.py backend/data/sessions/20260918_*_traffic --combine backend/data/sessions/20260918_results.mp4
+```
+
+화면에 그리는 박스는 `results.jsonl`의 `detections` 목록입니다. 새 신호등 테스트 결과에는 횡단보도 박스·신뢰도·실패 사유도 저장되어 내보낸 영상에 표시됩니다. 횡단보도 개수만 저장한 과거 기록은 원본 이미지를 재추론해야 횡단보도 박스를 볼 수 있습니다.
 
 결과 파일 읽기 예시:
 
@@ -416,13 +453,13 @@ ok = [r for r in rows if r["error"] is None]
 print(len(ok), "frames,", sum(r["timing"]["inference_ms"] for r in ok) / len(ok), "ms 평균 추론")
 ```
 
-프레임을 고정 10FPS 영상으로 이어붙이기 (실제 촬영 간격과 마스크 지연은 재현하지 않습니다. 실시간 기록은 `realtime_overlay.webm`을 보세요):
+프레임을 고정 10FPS 영상으로 이어붙이기 (신호등 기본 설정으로 촬영했다면 `-framerate 5`를 사용합니다. 실제 촬영 간격과 마스크 지연은 재현하지 않습니다. 실시간 기록은 `realtime_overlay.webm`을 보세요):
 
 ```bash
 ffmpeg -framerate 10 -pattern_type glob -i 'backend/data/sessions/<세션>/frames/*.jpg' -pix_fmt yuv420p out.mp4
 ```
 
-앱 안에 기록 조회 화면은 없습니다. 필요하면 API 로 볼 수 있습니다: `GET /api/sessions`, `GET /api/sessions/{id}`, `GET /api/sessions/{id}/results`, `GET /api/sessions/{id}/frames/{frame_id}.jpg`. 전체 API 문서는 서버를 켠 상태에서 http://127.0.0.1:8000/docs 입니다.
+앱 안에 기록 조회 화면은 없습니다. 필요하면 API 로 볼 수 있습니다: `GET /api/sessions`, `GET /api/sessions/{id}`, `GET /api/sessions/{id}/results`, `GET /api/sessions/{id}/frames/{frame_id}.jpg`, `GET /api/sessions/{id}/video`(영상 다운로드). 전체 API 문서는 서버를 켠 상태에서 http://127.0.0.1:8000/docs 입니다.
 
 ## 7. Git 사용 규칙
 
@@ -457,7 +494,7 @@ ffmpeg -framerate 10 -pattern_type glob -i 'backend/data/sessions/<세션>/frame
 | 테스트 시작 시 `No module named 'ultralytics'` 등 | 패키지를 시스템 Python 에 설치했습니다. `.venv/bin/pip install ...` 로 다시 설치하세요. |
 | 박스 위치가 어긋남 | 좌표가 정규화되지 않았거나 xywh 형식입니다. `check_model.py` 의 출력 이미지로 확인하세요. |
 | 추론 시간이 수백 ms 이상 | CPU 로 돌고 있을 가능성이 큽니다. 5-1 의 GPU 확인 명령을 실행하세요. |
-| 수신 FPS 가 10 에 못 미침 | 10FPS 는 상한입니다. 지연 로그에서 캡처·요청·그리기 시간을 비교하세요. "왕복" 에는 서버 처리도 포함됩니다. 요청 대기열은 없지만 처리 중에는 이전 마스크가 남습니다. |
+| 수신 FPS 가 10 에 못 미침 | 신호등은 5FPS, 나머지는 10FPS가 상한입니다. 지연 로그에서 캡처·요청·그리기 시간을 비교하세요. "왕복" 에는 서버 처리도 포함됩니다. 요청 대기열은 없지만 처리 중에는 이전 마스크가 남습니다. |
 | 오른쪽 위 "저장" 이 빨간색 | 디스크가 가득 찼거나 `backend/data` 에 쓰기 권한이 없습니다. |
 | 화면을 껐다 켜니 영상이 멈춤 | "카메라 재시작"을 누르세요. 테스트는 유지되고 전송이 이어집니다. |
 
@@ -475,7 +512,7 @@ ffmpeg -framerate 10 -pattern_type glob -i 'backend/data/sessions/<세션>/frame
 | `MAX_UPLOAD_BYTES` | 2097152 | 프레임 한 장 업로드 한도 |
 | `MIN_FREE_DISK_GB` | 2 | 여유 공간이 이보다 적으면 새 테스트를 막음 |
 
-전송 상한(10FPS), 해상도(640px), JPEG 품질(0.8), 요청 제한 시간(5초), 신뢰도 기준(0.4)은 `backend/static/js/app.js` 맨 위 `SETTINGS` 에 있습니다.
+전송 기본값은 신호등 **960px·5FPS·검출 신뢰도 0.25**, 도보 장애물·버스 **640px·10FPS·검출 신뢰도 0.4**입니다. `backend/static/js/app.js`의 `SETTINGS`와 `TRAFFIC_SETTINGS`에서 관리하며, 세션에 기록한 설정을 실제 캡처·전송 루프에도 동일하게 적용합니다. JPEG 품질은 0.8, 요청 제한 시간은 5초입니다. JPEG 0.8은 인코더 품질 값이며 파일 크기를 80% 또는 0.8%로 고정하는 압축률이 아닙니다.
 
 ### 코드 구조
 
@@ -486,7 +523,10 @@ backend/app/inference/
   ├─ base.py                         파이프라인 인터페이스, normalize_box
   ├─ registry.py                     가중치 폴더 탐색, 모델 1회 로딩
   ├─ mock.py                         가짜 박스 모델
-  └─ traffic.py / walking.py / bus.py   ← 팀원이 수정하는 파일
+  ├─ traffic.py                       신호등 선택·추적·대상 변경·색상 분류
+  ├─ traffic_geometry.py              횡단보도 줄무늬 기반 방향 추정
+  ├─ traffic_motion.py                카메라 이동 추정과 박스 좌표 보정
+  └─ walking.py / bus.py              도보 장애물·버스 파이프라인
 backend/app/services/                session_service(세션·프레임 처리), storage_service(폴더·파일 저장)
 backend/static/                      index.html, css/app.css
   └─ js/
@@ -500,6 +540,8 @@ backend/models/<기능>/               가중치 (Git 제외)
 backend/data/sessions/               테스트 기록 (Git 제외)
 scripts/                             run.sh, tunnel.sh, check_model.py, screenshot.py
 tests/                              API·마스크·캡처·녹화·지연 로그 테스트
+tests/test_traffic_*.py              신호등 기본값·방향·흔들림·선택 회귀 테스트
+docs/traffic-signal.md               신호등 동작·검증 결과·한계
 ```
 
 ### 테스트
@@ -516,4 +558,4 @@ node tests/test_client_timings.cjs
 node tests/test_recorder.cjs
 ```
 
-API·저장 오류, 마스크 픽셀, 캡처 대체 경로, 로그 재시도·안전 종료, 녹화 합성을 검사합니다. 공통 코드를 고쳤다면 push 전에 돌려 주세요.
+신호등 선택·추적·대상 변경, API·저장 오류, 마스크 픽셀, 캡처 대체 경로, 로그 재시도·안전 종료, 녹화 합성을 검사합니다. 공통 코드를 고쳤다면 push 전에 돌려 주세요.

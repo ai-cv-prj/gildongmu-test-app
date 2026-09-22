@@ -303,7 +303,7 @@ test("비트맵 디코딩 실패 시 기존 Image 경로로 전환한다", async
 
 // 실제 앱 루프의 제어 가능한 실행 환경
 /** 화면 요소와 업로드를 대체하여 캡처 도중 종료 및 실패 로그를 검사한다. */
-async function appHarness() {
+async function appHarness(mode = "walking") {
   const nodes = new Map(), tracked = [], sleeps = [], calls = [];
   const captureOptions = [];
   let sessionSettings, sessionClient;
@@ -327,7 +327,7 @@ async function appHarness() {
     window: { scrollTo() {}, addEventListener() {} },
     document: { getElementById: node, querySelector: node, hidden: false, visibilityState: "visible", addEventListener() {} },
     performance: { now: () => now }, Date: { now: () => 1000 + now },
-    localStorage: { getItem: () => null, setItem() {} }, navigator: {}, screen: {},
+    localStorage: { getItem: () => JSON.stringify({ mode }), setItem() {} }, navigator: {}, screen: {},
     setInterval() {}, setTimeout: (fn, ms) => { sleeps.push({ fn, ms }); },
     GCamera: {
       setOnEnded() {}, start: async () => {}, active: () => true,
@@ -345,7 +345,7 @@ async function appHarness() {
     GApi: {
       createTimings: (id) => { assert.equal(id, "session-A"); return logger; },
       health: async () => ({ storage_writable: true }),
-      models: async () => ({ models: [{ id: "traffic-mock", mode: "traffic", available: true }] }),
+      models: async () => ({ models: [{ id: `${mode}-mock`, mode, available: true }] }),
       createSession: async (body) => {
         sessionSettings = body.settings;
         sessionClient = body.client;
@@ -380,7 +380,36 @@ test("640px 전송 설정을 실제 캡처와 세션 기록에 동일하게 적�
   assert.equal(app.sessionSettings.jpeg_quality, 0.8);
   assert.equal(app.sessionSettings.target_fps, 10);
   assert.equal(app.sessionSettings.confidence, 0.4);
-  assert.equal(app.sessionClient.app_version, "latency-v3-cleanup");
+  assert.equal(app.sessionClient.app_version, "sesac-73-latency-v3");
+  const stopping = app.stop();
+  app.captured();
+  await stopping;
+});
+
+test("신호등은 960px·0.25를 기록하고 실제 전송도 5FPS로 제한한다", async () => {
+  const app = await appHarness("traffic");
+  assert.deepEqual(app.captureOptions, [{ maxSide: 960, quality: 0.8 }]);
+  assert.equal(app.sessionSettings.image_max_side, 960);
+  assert.equal(app.sessionSettings.target_fps, 5);
+  assert.equal(app.sessionSettings.confidence, 0.25);
+  app.tick(20);
+  app.captured();
+  await new Promise(setImmediate);
+  app.tick(70);
+  app.responded();
+  await new Promise(setImmediate);
+  assert.equal(app.sleeps[0].ms, 130);
+  const stopping = app.stop();
+  app.tick(200);
+  app.sleeps[0].fn();
+  await stopping;
+});
+
+test("버스도 640px·10FPS·0.4 설정을 유지한다", async () => {
+  const app = await appHarness("bus");
+  assert.deepEqual(app.captureOptions, [{ maxSide: 640, quality: 0.8 }]);
+  assert.equal(app.sessionSettings.target_fps, 10);
+  assert.equal(app.sessionSettings.confidence, 0.4);
   const stopping = app.stop();
   app.captured();
   await stopping;

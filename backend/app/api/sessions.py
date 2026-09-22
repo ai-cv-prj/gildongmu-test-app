@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
@@ -110,8 +110,11 @@ async def upload_recording(
 
 
 @router.post("/sessions/{session_id}/stop", response_model=StopResponse)
-async def stop_session(session_id: str, svc: SessionService = Depends(get_service)) -> StopResponse:
+async def stop_session(session_id: str, background_tasks: BackgroundTasks,
+                       svc: SessionService = Depends(get_service)) -> StopResponse:
     row, already = await run_in_threadpool(svc.stop, session_id)
+    if not already and row.get("video_status") == "pending":
+        background_tasks.add_task(svc.generate_video, session_id)
     return StopResponse(session=row, already_stopped=already)
 
 
@@ -151,3 +154,14 @@ def get_frame_image(session_id: str, frame_id: int, svc: SessionService = Depend
     if not path.exists():
         raise SessionError(404, "frame_not_found", "프레임 이미지가 없습니다")
     return FileResponse(path, media_type="image/jpeg")
+
+
+@router.get("/sessions/{session_id}/video")
+def get_session_video(session_id: str, svc: SessionService = Depends(get_service)) -> FileResponse:
+    row = svc.get(session_id)
+    if row.get("video_status") != "ready":
+        raise SessionError(404, "video_not_ready", "세션 영상이 아직 없습니다")
+    path = svc.storage.session_dir(session_id) / row["video_path"]
+    if not path.is_file():
+        raise SessionError(404, "video_not_found", "세션 영상 파일이 없습니다")
+    return FileResponse(path, media_type="video/mp4", filename=f"{session_id}.mp4")
