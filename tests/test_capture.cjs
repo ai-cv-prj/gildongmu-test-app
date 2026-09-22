@@ -1,5 +1,5 @@
 /**
- * file_path: tests/test_capture.cjs
+ * 파일 경로: tests/test_capture.cjs
  * Worker JPEG 캡처, 미지원 브라우저 전환, 종료 시 자원 해제를 검사한다.
  * 실제 카메라나 폴더를 사용하지 않고 Worker와 canvas를 메모리에서 대체한다.
  */

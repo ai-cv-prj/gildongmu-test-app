@@ -172,7 +172,7 @@ def test_stop_summary_matches_saved_files(client: TestClient, settings: Settings
     response = client.get(f"/api/sessions/{sid}/video")
     assert response.status_code == 200 and response.headers["content-type"] == "video/mp4"
 
-    # idempotent stop
+    # 종료 요청을 반복해도 같은 종료 상태를 유지한다.
     r2 = client.post(f"/api/sessions/{sid}/stop")
     assert r2.status_code == 200 and r2.json()["already_stopped"] is True
 
@@ -246,3 +246,20 @@ def test_weights_files_are_discovered(client: TestClient, settings: Settings):
     r = client.post("/api/sessions", json={"mode": "traffic", "model_id": "traffic-best-v2", "device_type": "x"})
     assert r.status_code == 500 and r.json()["error"]["code"] == "model_load_failed"
     assert client.get("/api/health").json()["active_session_id"] is None
+
+
+@pytest.mark.parametrize(("frame_id", "color"), [(1, "red"), (25, "green"), (50, "unknown")])
+def test_traffic_mock_exposes_selected_target_for_guidance(client: TestClient, frame_id: int, color: str):
+    """모의 결과도 음성 정책이 사용하는 현재 선택 인덱스와 대상 번호를 제공한다."""
+    sid = start(client)
+    response = upload(client, sid, frame_id, make_jpeg())
+    assert response.status_code == 200
+    result = response.json()
+    event = result["event"]
+    assert event["signal_state"] == color
+    index = event["selected_detection_index"]
+    if color == "unknown":
+        assert index is None
+    else:
+        assert result["detections"][index]["track_id"] == 1
+        assert result["detections"][index]["class_name"] == f"{color}_light"

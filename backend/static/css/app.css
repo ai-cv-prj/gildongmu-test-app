@@ -102,6 +102,10 @@ input:focus, select:focus { outline: none; border-color: var(--accent); backgrou
 .muted { color: var(--muted); }
 
 /* ---------- 지표 ---------- */
+.guidance-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.guidance-actions .btn { flex: 1 1 150px; font-size: 14px; }
+#guidance-text { margin: 0; font-size: 15px; line-height: 1.5; }
+
 .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
 .metric { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 15px; box-shadow: var(--shadow); padding: 8px 12px 9px; display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
 .metric::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3.5px; background: var(--accent); opacity: 0.85; }

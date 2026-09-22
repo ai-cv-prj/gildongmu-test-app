@@ -1,5 +1,5 @@
 /**
- * file_path: backend/static/js/camera.js
+ * 파일 경로: backend/static/js/camera.js
  * 후면 카메라를 제어하고 전송용 JPEG를 만든다.
  * 지원 브라우저에서는 별도 Worker에서 축소·인코딩하고 실패 시 기존 경로로 전환한다.
  */
@@ -92,7 +92,7 @@ window.GCamera = (() => {
       if (video.readyState >= 2) return resolve();
       video.onloadedmetadata = () => resolve();
     });
-    try { await video.play(); } catch (_) { /* autoplay 정책 */ }
+    try { await video.play(); } catch (_) { /* 자동 재생 정책 */ }
     getEncoder(); // 테스트 시작 전에 Worker 로딩을 시작한다.
     return { width: video.videoWidth, height: video.videoHeight, label: track.label };
   }

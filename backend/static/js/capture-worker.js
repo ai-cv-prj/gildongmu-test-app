@@ -1,5 +1,5 @@
 /**
- * file_path: backend/static/js/capture-worker.js
+ * 파일 경로: backend/static/js/capture-worker.js
  * 화면·녹화와 별도 스레드에서 카메라 프레임을 축소하고 JPEG로 인코딩한다.
  * 한 장 처리 후 VideoFrame/ImageBitmap 자원을 해제하며 이미지나 영상은 저장하지 않는다.
  */

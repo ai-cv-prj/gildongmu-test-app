@@ -1,5 +1,5 @@
 /**
- * file_path: backend/static/js/recorder.js
+ * 파일 경로: backend/static/js/recorder.js
  * 휴대폰 카메라와 현재 탐지 오버레이를 합쳐 WebM 영상으로 녹화한다.
  */
 window.GRecorder = (() => {

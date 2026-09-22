@@ -1,5 +1,5 @@
 /**
- * file_path: tests/test_client_timings.cjs
+ * 파일 경로: tests/test_client_timings.cjs
  * API에 통합한 지연 로그 수집·재시도와 비동기 마스크 그리기를 검사한다.
  * 가짜 시계와 canvas를 사용하여 서버·카메라·파일 생성 없이 실행한다.
  */
@@ -111,9 +111,12 @@ test("페이지는 통합 API를 앱보다 먼저 로드하고 삭제한 파일�
   const html = fs.readFileSync("backend/static/index.html", "utf8");
   const app = fs.readFileSync("backend/static/js/app.js", "utf8");
   const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((match) => match[1]);
-  assert.equal(scripts.length, 5);
+  assert.equal(scripts.length, 7);
   assert.equal(scripts[0], "/static/js/api.js?v=latency-v3-cleanup");
-  assert.equal(scripts.at(-1), "/static/js/app.js?v=latency-v3-cleanup");
+  assert.equal(scripts.at(-1), "/static/js/app.js?v=traffic-audio-v13");
+  assert.ok(scripts.indexOf("/static/js/tts.js?v=traffic-audio-v13") >= 0);
+  assert.ok(scripts.indexOf("/static/js/tts.js?v=traffic-audio-v13") < scripts.length - 1);
+  assert.ok(scripts.includes("/static/js/guidance.js?v=traffic-audio-v13"));
   assert.equal(fs.existsSync("backend/static/js/timings.js"), false);
   assert.doesNotMatch(html, /\/js\/timings\.js/);
   assert.doesNotMatch(app, /GTimings/);
@@ -303,10 +306,12 @@ test("비트맵 디코딩 실패 시 기존 Image 경로로 전환한다", async
 
 // 실제 앱 루프의 제어 가능한 실행 환경
 /** 화면 요소와 업로드를 대체하여 캡처 도중 종료 및 실패 로그를 검사한다. */
-async function appHarness(mode = "walking") {
-  const nodes = new Map(), tracked = [], sleeps = [], calls = [];
+async function appHarness(mode = "walking", { start = true, prefs = {}, storageAvailable = true, deferSession = false } = {}) {
+  const nodes = new Map(), tracked = [], sleeps = [], calls = [], visibilityHandlers = {};
+  const media = require("./helpers/audio.cjs").audioHarness({ onPlay: () => calls.push("play") });
   const captureOptions = [];
-  let sessionSettings, sessionClient;
+  let sessionSettings, sessionClient, resolveSession;
+  let storedPrefs = JSON.stringify({ mode, ...prefs });
   let now = 0, captureResolve, captureReject, uploadResolve, uploadReject;
   // 최소 화면 요소 생성
   /** 앱 이벤트를 호출하고 화면 상태를 읽을 수 있는 요소를 반환한다. */
@@ -324,11 +329,17 @@ async function appHarness(mode = "walking") {
     finish: async () => { calls.push("finish"); return true; },
   };
   const context = {
-    window: { scrollTo() {}, addEventListener() {} },
-    document: { getElementById: node, querySelector: node, hidden: false, visibilityState: "visible", addEventListener() {} },
+    window: {
+      scrollTo() {}, addEventListener() {},
+      Audio: media.Audio,
+    },
+    document: { getElementById: node, querySelector: node, hidden: false, visibilityState: "visible", addEventListener(name, fn) { visibilityHandlers[name] = fn; } },
     performance: { now: () => now }, Date: { now: () => 1000 + now },
-    localStorage: { getItem: () => JSON.stringify({ mode }), setItem() {} }, navigator: {}, screen: {},
-    setInterval() {}, setTimeout: (fn, ms) => { sleeps.push({ fn, ms }); },
+    localStorage: {
+      getItem: () => { if (!storageAvailable) throw new Error("unavailable"); return storedPrefs; },
+      setItem: (key, value) => { if (!storageAvailable) throw new Error("unavailable"); storedPrefs = value; },
+    }, navigator: {}, screen: {},
+    setInterval() {}, setTimeout: (fn, ms) => { sleeps.push({ fn, ms }); }, clearTimeout() {},
     GCamera: {
       setOnEnded() {}, start: async () => {}, active: () => true,
       captureBackend: () => "worker",
@@ -339,7 +350,7 @@ async function appHarness(mode = "walking") {
     },
     GRecorder: { start() {}, stop: async () => null, active: () => true },
     GOverlay: {
-      clear: () => calls.push("clear"), describeDetection: () => ({}),
+      clear: () => calls.push("clear"), describeDetection: () => ({}), describeCrosswalkEvent: () => "",
       draw: () => { calls.push("draw"); return Promise.resolve({ status: "drawn", drawn_ms: now }); },
     },
     GApi: {
@@ -347,8 +358,10 @@ async function appHarness(mode = "walking") {
       health: async () => ({ storage_writable: true }),
       models: async () => ({ models: [{ id: `${mode}-mock`, mode, available: true }] }),
       createSession: async (body) => {
+        calls.push("create-session");
         sessionSettings = body.settings;
         sessionClient = body.client;
+        if (deferSession) return new Promise(resolve => { resolveSession = resolve; });
         return { session_id: "session-A" };
       },
       uploadFrame: () => {
@@ -358,16 +371,26 @@ async function appHarness(mode = "walking") {
       stopSession: async () => { calls.push("stop"); return { session: {} }; },
     },
   };
-  vm.runInNewContext(fs.readFileSync("backend/static/js/app.js", "utf8"), context);
+  vm.createContext(context);
+  for (const name of ["tts", "guidance"]) {
+    vm.runInContext(fs.readFileSync(`backend/static/js/${name}.js`, "utf8"), context);
+  }
+  context.GTts = context.window.GTts;
+  context.GGuidance = context.window.GGuidance;
+  vm.runInContext(fs.readFileSync("backend/static/js/app.js", "utf8"), context);
   await Promise.resolve();
-  await node("btn-camera").handlers.click();
-  await node("btn-start").handlers.click();
+  if (start) {
+    await node("btn-camera").handlers.click();
+    await node("btn-start").handlers.click();
+  }
   return {
-    tracked, calls, sleeps, node, captureOptions, sessionSettings, sessionClient,
+    tracked, calls, sleeps, node, captureOptions, sessionSettings, sessionClient, played: media.plays,
+    prefs: () => JSON.parse(storedPrefs), resolveSession: () => resolveSession({ session_id: "session-A" }),
+    hide: () => { context.document.hidden = true; visibilityHandlers.visibilitychange(); },
     tick: (time) => { now = time; },
     captured: (blob = { size: 42000 }) => captureResolve(blob),
     captureFailed: () => captureReject(new Error("camera error")),
-    responded: () => uploadResolve({ frame_id: 1, saved: true, timing: {} }),
+    responded: (result = {}) => uploadResolve({ session_id: "session-A", frame_id: 1, saved: true, timing: {}, ...result }),
     failed: () => uploadReject({ code: "timeout", status: 0, message: "timeout" }),
     stop: () => node("btn-stop").handlers.click(),
   };
@@ -380,7 +403,7 @@ test("640px 전송 설정을 실제 캡처와 세션 기록에 동일하게 적�
   assert.equal(app.sessionSettings.jpeg_quality, 0.8);
   assert.equal(app.sessionSettings.target_fps, 10);
   assert.equal(app.sessionSettings.confidence, 0.4);
-  assert.equal(app.sessionClient.app_version, "sesac-73-latency-v3");
+  assert.equal(app.sessionClient.app_version, "traffic-audio-v13");
   const stopping = app.stop();
   app.captured();
   await stopping;
@@ -398,10 +421,10 @@ test("신호등은 960px·0.25를 기록하고 실제 전송도 5FPS로 제한�
   app.tick(70);
   app.responded();
   await new Promise(setImmediate);
-  assert.equal(app.sleeps[0].ms, 130);
+  assert.equal(app.sleeps.at(-1).ms, 130);
   const stopping = app.stop();
   app.tick(200);
-  app.sleeps[0].fn();
+  app.sleeps.at(-1).fn();
   await stopping;
 });
 
@@ -536,4 +559,245 @@ test("JPEG가 생성되지 않은 경우도 빈 캡처로 구별한다", async (
   assert.equal(row.error_code, "capture_empty");
   assert.equal(row.jpeg_bytes, 0);
   assert.equal(row.retry_wait_ms, 100);
+});
+
+// 실제 앱 이벤트와 프레임 루프를 통해 안내 모듈 연결을 검증한다.
+test("신호등 테스트 시작 클릭에서 자동 재생하고 최초 초록불에 다음 신호 대기를 안내한다", async () => {
+  const app = await appHarness("traffic");
+  assert.equal(app.node("guidance-panel").hidden, false);
+  assert.equal(app.played.length, 1);
+  assert.ok(app.calls.indexOf("play") < app.calls.indexOf("create-session"));
+  assert.equal(app.played[0].src, "/static/audio/ko-v1/startup.mp3");
+  assert.equal(app.node("btn-mute").textContent, "음성 끄기");
+  app.played[0].start(); app.played[0].end();
+  for (let i = 0; i < 3; i++) {
+    app.captured();
+    await new Promise(setImmediate);
+    app.tick(i * 200 + 50);
+    app.responded({ frame_id: i + 1, detections: [{ track_id: 1 }],
+      event: { type: "traffic_signal", signal_state: "green", selected_detection_index: 0 } });
+    await new Promise(setImmediate);
+    if (i < 2) {
+      app.tick((i + 1) * 200);
+      app.sleeps.findLast(s => s.ms === 150).fn();
+      await new Promise(setImmediate);
+    }
+  }
+  assert.equal(app.played.at(-1).src, "/static/audio/ko-v1/green-initial-wait.mp3");
+  const stopping = app.stop();
+  assert.equal(app.node("btn-mute").disabled, false);
+  app.tick(600); app.sleeps.findLast(s => s.ms === 150).fn();
+  await stopping;
+  assert.equal(app.node("guidance-panel").hidden, false);
+});
+
+test("화면 숨김은 음성을 종료하고 늦게 도착한 신호로 재개하지 않는다", async () => {
+  const app = await appHarness("traffic");
+  app.captured(); await new Promise(setImmediate);
+  app.hide();
+  assert.equal(app.node("btn-mute").disabled, false);
+  assert.match(app.node("guidance-text").textContent, /화면이 숨겨져/);
+  const stopping = app.stop();
+  app.responded({ detections: [{ track_id: 1 }],
+    event: { type: "traffic_signal", signal_state: "green", selected_detection_index: 0 } });
+  await stopping;
+  assert.equal(app.played.length, 1);
+});
+
+test("음원 로딩 실패는 안내 상태를 종료하고 다시 시작할 수 있게 한다", async () => {
+  const app = await appHarness("traffic");
+  app.node("btn-mute").handlers.click();
+  app.node("btn-mute").handlers.click();
+  app.played.at(-1).error(2);
+  assert.match(app.node("guidance-text").textContent, /서버 연결/);
+  assert.equal(app.node("btn-mute").disabled, false);
+  assert.equal(app.node("btn-mute").textContent, "음성 끄기");
+  app.node("btn-mute").handlers.click();
+  app.node("btn-mute").handlers.click();
+  assert.equal(app.played.length, 3);
+  const stopping = app.stop(); app.captured(); await stopping;
+});
+
+test("다른 기능에서는 신호 안내 패널을 숨기고 음성 켜기도 무시한다", async () => {
+  const app = await appHarness("walking");
+  assert.equal(app.node("guidance-panel").hidden, true);
+  app.node("btn-mute").handlers.click();
+  assert.equal(app.played.length, 0);
+  const stopping = app.stop(); app.captured(); await stopping;
+});
+
+test("카메라와 세션 없이 음성 확인을 재생하고 실제 재생 상태를 표시한다", async () => {
+  const app = await appHarness("traffic", { start: false });
+  assert.equal(app.node("guidance-panel").hidden, false);
+  assert.equal(app.node("btn-mute").disabled, false);
+  app.node("btn-sound-check").handlers.click();
+  assert.equal(app.played[0].src, "/static/audio/ko-v1/sound-check.mp3");
+  assert.equal(app.calls.includes("create-session"), false);
+  assert.equal(app.captureOptions.length, 0);
+  app.played[0].start();
+  assert.match(app.node("tts-status").textContent, /재생 중/);
+  app.played[0].end();
+  assert.match(app.node("tts-status").textContent, /끝났습니다/);
+});
+
+test("기본 음성 안내를 끄고 다시 켤 수 있다", async () => {
+  const app = await appHarness("traffic");
+  app.node("btn-mute").handlers.click();
+  assert.equal(app.node("btn-mute").textContent, "음성 켜기");
+  const count = app.played.length;
+  app.node("btn-mute").handlers.click();
+  assert.equal(app.played.length, count + 1);
+  assert.equal(app.node("btn-mute").textContent, "음성 끄기");
+  const stopping = app.stop(); app.captured(); await stopping;
+});
+
+test("실제 프레임 루프에서도 대상 교체로 같은 색 음원을 반복하지 않는다", async () => {
+  const app = await appHarness("traffic");
+  app.played[0].start(); app.played[0].end();
+  const frames = [
+    ...Array(3).fill({ color: "red", target: 1 }),
+    ...Array(3).fill({ color: "red", target: 2 }),
+    ...Array(3).fill({ color: "green", target: 2 }),
+    ...Array(3).fill({ color: "green", target: 1 }),
+  ];
+  for (let i = 0; i < frames.length; i++) {
+    const { color, target } = frames[i];
+    app.captured();
+    await new Promise(setImmediate);
+    app.tick(i * 200 + 50);
+    app.responded({ frame_id: i + 1, detections: [{ track_id: target }],
+      event: { type: "traffic_signal", signal_state: color, selected_detection_index: 0 } });
+    await new Promise(setImmediate);
+    if (i === 2) app.played[1].start();
+    if (i < frames.length - 1) {
+      app.tick((i + 1) * 200);
+      app.sleeps.findLast(s => s.ms === 150).fn();
+      await new Promise(setImmediate);
+    }
+  }
+  // 빨간불 안내가 아직 끝나지 않았으므로 초록 전환은 대기한다.
+  assert.deepEqual(app.played.map(p => p.src), [
+    "/static/audio/ko-v1/startup.mp3", "/static/audio/ko-v1/red.mp3",
+  ]);
+  app.played[1].end();
+  assert.equal(app.played[2].src, "/static/audio/ko-v1/green-changed.mp3");
+  assert.match(app.node("guidance-text").textContent, /초록불입니다/);
+  const stopping = app.stop();
+  app.tick(frames.length * 200); app.sleeps.findLast(s => s.ms === 150).fn();
+  await stopping;
+});
+
+test("대상 재확인 설명은 2.5초 보관·교체 보류 상태를 표시한다", () => {
+  const { overlay } = overlayHarness();
+  for (const reason of ["waiting_for_target_reacquisition", "waiting_for_target_hold"]) {
+    assert.match(overlay.describeCrosswalkEvent({ crosswalk_diagnostics: { connection_status: reason, candidate_count: 0 } }), /기존/);
+  }
+});
+
+test("카메라와 테스트 없이 음성 설정을 바꾸고 선택만으로는 재생하지 않는다", async () => {
+  const app = await appHarness("traffic", { start: false });
+  assert.equal(app.node("btn-mute").disabled, false);
+  assert.equal(app.node("btn-mute").textContent, "음성 끄기");
+  app.node("btn-mute").handlers.click();
+  assert.equal(app.node("btn-mute").textContent, "음성 켜기");
+  assert.equal(app.prefs().voiceEnabled, false);
+  app.node("btn-mute").handlers.click();
+  assert.equal(app.prefs().voiceEnabled, true);
+  assert.match(app.node("guidance-text").textContent, /테스트를 시작하면/);
+  assert.equal(app.played.length, 0);
+  assert.equal(app.calls.includes("create-session"), false);
+});
+
+test("테스트 전에 꺼둔 설정은 카메라 시작과 다음 테스트에도 유지한다", async () => {
+  const app = await appHarness("traffic", { start: false });
+  app.node("btn-mute").handlers.click();
+  await app.node("btn-camera").handlers.click();
+  await app.node("btn-start").handlers.click();
+  assert.equal(app.played.length, 0);
+  assert.equal(app.node("btn-mute").textContent, "음성 켜기");
+  let stopping = app.stop(); app.captured(); await stopping;
+  assert.equal(app.node("btn-mute").disabled, false);
+  await app.node("btn-start").handlers.click();
+  assert.equal(app.played.length, 0);
+  stopping = app.stop(); app.captured(); await stopping;
+});
+
+test("저장된 끄기 설정을 새 페이지에 복원하고 테스트 중에는 바로 켤 수 있다", async () => {
+  const first = await appHarness("traffic", { start: false });
+  first.node("btn-mute").handlers.click();
+  const app = await appHarness("traffic", { prefs: first.prefs() });
+  assert.equal(app.played.length, 0);
+  assert.equal(app.node("btn-mute").textContent, "음성 켜기");
+  app.node("btn-mute").handlers.click();
+  assert.equal(app.played.length, 1);
+  assert.equal(app.prefs().voiceEnabled, true);
+  const stopping = app.stop(); app.captured(); await stopping;
+});
+
+test("미리 켜둔 설정은 테스트 시작 클릭 안에서 처음 재생한다", async () => {
+  const app = await appHarness("traffic", { start: false, prefs: { voiceEnabled: false } });
+  app.node("btn-mute").handlers.click();
+  assert.equal(app.played.length, 0);
+  await app.node("btn-camera").handlers.click();
+  await app.node("btn-start").handlers.click();
+  assert.equal(app.played.length, 1);
+  assert.ok(app.calls.indexOf("play") < app.calls.indexOf("create-session"));
+  const stopping = app.stop(); app.captured(); await stopping;
+});
+
+test("세션 생성 응답을 기다리는 동안 꺼도 늦은 응답이 음성을 켜지 않는다", async () => {
+  const app = await appHarness("traffic", { start: false, deferSession: true });
+  await app.node("btn-camera").handlers.click();
+  const starting = app.node("btn-start").handlers.click();
+  assert.equal(app.played.length, 1);
+  app.node("btn-mute").handlers.click();
+  app.resolveSession(); await starting;
+  assert.equal(app.played.length, 1);
+  assert.equal(app.node("btn-mute").textContent, "음성 켜기");
+  assert.equal(app.prefs().voiceEnabled, false);
+  const stopping = app.stop(); app.captured(); await stopping;
+});
+
+test("설정 저장이 차단돼도 현재 페이지의 음성 끄기를 적용한다", async () => {
+  const app = await appHarness("traffic", { start: false, storageAvailable: false });
+  app.node("btn-mute").handlers.click();
+  await app.node("btn-camera").handlers.click();
+  await app.node("btn-start").handlers.click();
+  assert.equal(app.played.length, 0);
+  const stopping = app.stop(); app.captured(); await stopping;
+});
+
+test("음성 확인도 시작 안내를 끊지 않고 종료 후 순서대로 재생한다", async () => {
+  const app = await appHarness("traffic");
+  app.played[0].start();
+  app.node("btn-sound-check").handlers.click();
+  assert.equal(app.played.length, 1);
+  app.played[0].end();
+  assert.equal(app.played[1].src, "/static/audio/ko-v1/sound-check.mp3");
+  assert.equal(app.node("btn-mute").textContent, "음성 끄기");
+  app.played[1].start(); app.played[1].end();
+  const stopping = app.stop(); app.captured(); await stopping;
+});
+
+for (const action of ["mute", "stop"]) {
+  test(`${action}: 앱에서 중단하면 대기 중인 후속 음성도 지운다`, async () => {
+    const app = await appHarness("traffic");
+    app.played[0].start();
+    app.node("btn-sound-check").handlers.click();
+    assert.equal(app.played.length, 1);
+    if (action === "mute") app.node("btn-mute").handlers.click();
+    const stopping = app.stop(); app.captured(); await stopping;
+    app.played[0].end();
+    await new Promise(setImmediate);
+    assert.equal(app.played.length, 1);
+  });
+}
+
+test("신호등 미선택·후보·확정 박스에 추적 ID를 표시한다", () => {
+  const { overlay } = overlayHarness();
+  for (const selection_status of ["unselected", "candidate", "selected"]) {
+    const style = overlay.describeDetection({ class_name: "pedestrian_signal", confidence: .9,
+      track_id: 7, extra: { selection_status, signal_state: "red", color_confidence: .95 } });
+    assert.match(style.label, /ID 7/);
+  }
 });

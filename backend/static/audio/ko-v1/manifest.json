@@ -1,0 +1,22 @@
+{
+  "language": "ko-KR",
+  "generated_on": "2026-09-22",
+  "source": "Google Translate TTS (client=tw-ob)",
+  "clips": {
+    "startup.mp3": "신호 안내를 시작합니다.",
+    "red.mp3": "빨간불입니다.",
+    "green-changed.mp3": "초록불로 바뀌었습니다.",
+    "red-changed.mp3": "빨간불로 바뀌었습니다.",
+    "missing.mp3": "신호를 확인할 수 없습니다.",
+    "mock-startup.mp3": "모의 신호. 신호 안내를 시작합니다.",
+    "mock-red.mp3": "모의 신호. 빨간불입니다.",
+    "mock-green-changed.mp3": "모의 신호. 초록불로 바뀌었습니다.",
+    "mock-red-changed.mp3": "모의 신호. 빨간불로 바뀌었습니다.",
+    "mock-missing.mp3": "모의 신호. 신호를 확인할 수 없습니다.",
+    "sound-check.mp3": "음성 확인입니다. 이 문장이 들리면 신호 안내를 사용할 수 있습니다.",
+    "green-initial-wait.mp3": "초록불입니다. 다음 초록 신호를 기다려 주세요.",
+    "mock-green-initial-wait.mp3": "모의 신호. 초록불입니다. 다음 초록 신호를 기다려 주세요.",
+    "green.mp3": "초록불입니다.",
+    "mock-green.mp3": "모의 신호. 초록불입니다."
+  }
+}
