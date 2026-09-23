@@ -9,18 +9,22 @@ yolo:
 risk:
   enabled: true
   corridor_polygon:
-  - - 0.40
+  - - 0.38
     - 0.30
-  - - 0.60
+  - - 0.62
     - 0.30
+  - - 0.98
+    - 0.75
   - - 0.98
     - 1.0
   - - 0.02
     - 1.0
-  immediate_polygon:
-  - - 0.205
+  - - 0.02
     - 0.75
-  - - 0.795
+  immediate_polygon:
+  - - 0.02
+    - 0.75
+  - - 0.98
     - 0.75
   - - 0.98
     - 1.0
@@ -30,8 +34,8 @@ risk:
   footprint_max_height: 0.02
   exit_overlap_threshold: 0.1
   exit_margin: 0.02
-  static_caution_y: 0.65
-  static_danger_y: 0.88
+  static_caution_y: 0.55
+  static_danger_y: 0.78
   static_ground_classes:
   - pole
   - bollard
@@ -79,6 +83,8 @@ risk:
   # 큰 검토용 오버레이(채운 ROI·카드 라벨·하단 요약 패널)로 표시한다. false면 간략 표시.
   review_overlay: true
   log_jsonl: true
+  # 촬영 불가 상태를 경고·응답에 반영한다. 음성 재생은 별도 PR에서 연결한다.
+  camera_view_guard_enabled: true
   # Shared image profile: no individual body dimensions, depth or ground-height model.
   side_proximity_enabled: true
   side_near_y: 0.50
@@ -88,6 +94,19 @@ risk:
   relative_entry_enabled: true
   roi_recalibration_enabled: true
   roi_ground_adapt_enabled: true
+  roi_top_max_y: 0.60
+  roi_extent_smooth_s: 0.35
+  roi_extent_hold_s: 0.50
+  roi_extent_deadband: 0.015
+  roi_extent_max_shift_per_s: 0.40
+  hard_reset_gap_s: 2.0
+  label_confirm_frames: 3
+  label_confidence: 0.60
+  label_conflict_hold_s: 0.80
+  wide_roi_priority_enabled: true
+  central_danger_left: 0.20
+  central_danger_right: 0.80
+  side_danger_y: 0.90
   roi_jitter_shift: 0.03
   roi_large_shift: 0.08
   roi_change_confirm_s: 0.30

@@ -81,7 +81,9 @@
       const c = ev.counts || {};
       el.resultRow.textContent = `위험 ${c.danger || 0} · 주의 ${(c.caution || 0) + (c.surface || 0) + (c.advisories || 0)} · 관측 ${c.monitor || 0} · 추적 ${c.tracked || 0}`;
     }
-    if (ev.type === "walking_warning" && Number.isFinite(ev.walkable_ratio)) {
+    if (ev.type === "walking_warning" && ev.camera_view?.status === "unavailable") {
+      el.resultRow.textContent = "촬영 불가 · 검출 결과 보류 · frame " + res.frame_id;
+    } else if (ev.type === "walking_warning" && Number.isFinite(ev.walkable_ratio)) {
       const crosswalk = Number.isFinite(ev.crosswalk_ratio)
         ? ` · 횡단보도(핑크) ${(ev.crosswalk_ratio * 100).toFixed(1)}%` : "";
       el.resultRow.textContent = `보행가능(초록) ${(ev.walkable_ratio * 100).toFixed(1)}%${crosswalk} · frame ${res.frame_id}`;

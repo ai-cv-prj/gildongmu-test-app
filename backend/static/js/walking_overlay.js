@@ -23,14 +23,17 @@ window.GWalkingOverlay = (() => {
       ctx.fillStyle="rgba(12,16,22,.88)"; ctx.fillRect(x,y,width,size+8);
       ctx.fillStyle=color; ctx.fillText(text,x+5,y+4);
     }
-    for (const region of ev.surface?.alert_level ? ev.surface.regions || [] : []) {
+    const viewUnavailable = ev.camera_view?.status === "unavailable";
+    for (const region of !viewUnavailable && ev.surface?.alert_level ? ev.surface.regions || [] : []) {
       polygon(region.polygon,"#ffd200","rgba(255,190,0,.20)");
     }
     const roi=ev.roi || {};
-    for (const p of roi.corridor_polygons || [roi.corridor_polygon]) polygon(p,"#14dcff","rgba(20,220,255,.09)");
-    polygon(roi.immediate_polygon,"#fa28dc","rgba(250,40,220,.14)");
+    if (!viewUnavailable) {
+      for (const p of roi.corridor_polygons || [roi.corridor_polygon]) polygon(p,"#14dcff","rgba(20,220,255,.09)");
+      polygon(roi.immediate_polygon,"#fa28dc","rgba(250,40,220,.14)");
+    }
     const ordered=[...(detections||[])].sort((a,b)=>({monitor:0,caution:1,danger:2}[a.extra?.alert_level]||0)-({monitor:0,caution:1,danger:2}[b.extra?.alert_level]||0));
-    for (const d of ordered) {
+    for (const d of viewUnavailable ? [] : ordered) {
       const e=d.extra||{}, level=e.alert_level ?? e.risk_level;
       if (!level) continue;
       const color=colors[level]||colors.monitor;
@@ -39,7 +42,7 @@ window.GWalkingOverlay = (() => {
       if (level!=="monitor" && e.warning_primary===false) continue;
       const state=e.alert_status==="uncertain" && level==="monitor" ? "UNKNOWN" : level.toUpperCase();
       const group=e.warning_group_size>1 ? ` x${e.warning_group_size}` : "";
-      label(`${state} | ${d.class_name} ${d.track_id==null?"NEW":"#"+d.track_id}${group}`,x1,y1-22,color);
+      label(`${state} | ${e.display_label||d.class_name} ${d.track_id==null?"NEW":"#"+d.track_id}${group}`,x1,y1-22,color);
       if (level!=="monitor") {
         const reason=(e.reasons||[]).includes("side_close_candidate") ? "SIDE CLOSE" : (e.reasons||[]).includes("static_near_contact") ? "NEAR CONTACT" : e.in_path ? "PATH" : "CLOSE CANDIDATE";
         const ttc=Number.isFinite(e.ttc_s) ? `TTC~${e.ttc_s.toFixed(1)}s` : "TTC --";
@@ -47,8 +50,9 @@ window.GWalkingOverlay = (() => {
       }
     }
     const c=ev.counts||{};
-    label(`DANGER ${c.danger||0}   CAUTION ${(c.caution||0)+(c.surface||0)+(c.advisories||0)}   MONITOR/UNK ${c.monitor||0}`,r.x+5,r.y+r.h-46,"#fff",11);
-    label(`ROI: ${roi.source||"fixed"} · ${ev.tracker_status||"unknown"}${ev.state_reset?" · 상태 초기화":""}`,r.x+5,r.y+r.h-23,"#ccc",10);
+    label(`DANGER ${c.danger||0}   CAUTION ${(c.caution||0)+(c.surface||0)+(c.advisories||0)+(c.camera_view||0)}   MONITOR/UNK ${c.monitor||0}`,r.x+5,r.y+r.h-46,"#fff",11);
+    if (viewUnavailable) label("CAMERA: 촬영 불가 · 전방을 비춰주세요",r.x+5,r.y+r.h-23,"#ccc",10);
+    else label(`ROI: ${roi.source||"fixed"} · ${ev.tracker_status||"unknown"}${ev.state_reset?" · 상태 초기화":""}`,r.x+5,r.y+r.h-23,"#ccc",10);
     if (ev.warning_text) label(ev.warning_text,r.x+5,r.y+6,colors[ev.level]||colors.caution,Math.min(14,Math.max(11,r.w/27)));
     ctx.restore();
   }

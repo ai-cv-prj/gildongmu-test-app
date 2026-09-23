@@ -55,6 +55,14 @@ DEFAULT_RISK = {
 # New rules are enabled explicitly in inference.yaml, so saved older configs replay unchanged.
 DEFAULT_RISK.update({
     "roi_ground_adapt_enabled":False,
+    "roi_top_max_y":.65, "roi_extent_smooth_s":.35,
+    "roi_extent_hold_s":.50, "roi_extent_deadband":.015,
+    "roi_extent_max_shift_per_s":.40,
+    "hard_reset_gap_s":.50,
+    "label_confirm_frames":3, "label_confidence":.60,
+    "wide_roi_priority_enabled":False,
+    "central_danger_left":.20, "central_danger_right":.80, "side_danger_y":.92,
+    "label_conflict_hold_s":.80,
     "side_proximity_enabled":False, "side_near_y":.50,
     "side_min_height":.18, "side_min_width":.12,
     "full_static_footprint":False, "relative_entry_enabled":False,
@@ -63,6 +71,7 @@ DEFAULT_RISK.update({
     "surface_risk_enabled":False, "surface_confirm_s":.20, "surface_clear_s":.50,
     "surface_min_area":.003, "surface_band_fraction":.12, "surface_unstable_change":.18,
     "class_bridge_enabled":False, "visibility_advisory_s":1.0,
+    "camera_view_guard_enabled":False,
     "warning_grouping_enabled":False,
     "warning_group_iou":.65, "warning_group_containment":.85,
     "warning_group_max_area_ratio":1.60,
@@ -104,19 +113,25 @@ def risk_config(value=None):
             raise ValueError(f"risk.{key}: must be a convex polygon in [0,1]")
     for key in ("roi_ground_adapt_enabled","side_proximity_enabled","full_static_footprint","relative_entry_enabled",
                 "roi_recalibration_enabled","surface_risk_enabled","class_bridge_enabled",
-                "warning_grouping_enabled"):
+                "warning_grouping_enabled","wide_roi_priority_enabled",
+                "camera_view_guard_enabled"):
         if not isinstance(cfg[key],bool):
             raise ValueError(f"risk.{key} must be boolean")
     for key in ("side_near_y","side_min_height","side_min_width","roi_jitter_shift",
                 "roi_large_shift","roi_candidate_spread","surface_min_area",
                 "surface_band_fraction","surface_unstable_change","warning_group_iou",
-                "warning_group_containment"):
+                "warning_group_containment","roi_top_max_y","roi_extent_deadband",
+                "label_confidence","central_danger_left","central_danger_right",
+                "side_danger_y","roi_extent_max_shift_per_s"):
         _number(cfg[key],f"risk.{key}",0,1,True)
     for key in ("roi_change_confirm_s","roi_small_confirm_s","surface_confirm_s",
-                "surface_clear_s","visibility_advisory_s"):
+                "surface_clear_s","visibility_advisory_s","roi_extent_smooth_s",
+                "roi_extent_hold_s","hard_reset_gap_s","label_conflict_hold_s"):
         _number(cfg[key],f"risk.{key}",0,strictly_positive=True)
     _number(cfg["warning_group_max_area_ratio"],"risk.warning_group_max_area_ratio",1,
             strictly_positive=True)
+    if cfg["central_danger_left"] >= cfg["central_danger_right"]:
+        raise ValueError("central danger left must be below right")
     if cfg["roi_jitter_shift"] >= cfg["roi_large_shift"]:
         raise ValueError("ROI jitter threshold must be below large shift")
     unit = ("footprint_height_ratio", "overlap_threshold", "edge_margin_ratio",
@@ -132,6 +147,14 @@ def risk_config(value=None):
                 "camera_max_rotation_deg", "roi_confirm_s", "roi_smooth_s", "roi_hold_s",
                 "roi_return_s", "clear_confirm_s", "uncertainty_hold_s", "id_bridge_s"):
         _number(cfg[key], f"risk.{key}", 0, strictly_positive=True)
+    if (isinstance(cfg["label_confirm_frames"], bool) or
+            not isinstance(cfg["label_confirm_frames"], int) or cfg["label_confirm_frames"] < 1):
+        raise ValueError("label_confirm_frames must be a positive integer")
+    if cfg["hard_reset_gap_s"] < cfg["reset_gap_s"]:
+        raise ValueError("hard_reset_gap_s must not be below reset_gap_s")
+    if cfg["roi_top_max_y"] >= min(p[1] for p in cfg["corridor_polygon"]
+                                   if p[1] > min(v[1] for v in cfg["corridor_polygon"])):
+        raise ValueError("roi_top_max_y must remain above the lower ROI")
     names = cfg["static_ground_classes"]
     if not isinstance(names, list) or any(not isinstance(n, str) or not n for n in names):
         raise ValueError("static_ground_classes must be a list of class names")

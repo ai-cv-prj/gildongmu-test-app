@@ -104,7 +104,7 @@ class SidewalkGuidedROI:
                               path_top_y=extent["top_y"],ground_extent=extent,
                               changed=result["changed"] or extent["changed"])
             return result
-        if self.previous_time is not None and (timestamp<=self.previous_time or timestamp-self.previous_time>self.cfg["reset_gap_s"]):
+        if self.previous_time is not None and (timestamp<=self.previous_time or timestamp-self.previous_time>self.cfg["hard_reset_gap_s"]):
             self.reset()
         dt=0 if self.previous_time is None else timestamp-self.previous_time
         self.previous_time=timestamp

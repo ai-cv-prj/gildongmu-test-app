@@ -120,3 +120,43 @@ def test_held_warning_does_not_claim_new_motion():
     item=p["detections"][0]
     item.update(alert_level="danger",alert_status="held")
     assert '이전 경고 유지' in warning_summary(p)[1]
+
+def test_soft_gap_invalidates_motion_without_resetting_alerts():
+    c = FrameClock(.5, 2.0)
+    assert c.read(1000).valid
+    soft = c.read(1600)
+    assert not soft.valid
+    assert soft.reset_reason is None
+    assert soft.gap_s == pytest.approx(.6)
+    hard = c.read(3900)
+    assert not hard.valid
+    assert hard.reset_reason == "capture_gap"
+
+
+def test_response_uses_selected_hazard_and_preserves_raw_detector_name():
+    prediction = engine().update(np.zeros((100, 100, 3), np.uint8),
+                                 [detection((40, 55, 60, 90))], 0)
+    item = prediction["detections"][0]
+    assert item["label_status"] == "provisional"
+    response = make_response(prediction, (100, 100, 3),
+                             np.ones((100, 100), np.uint8), LABELS,
+                             FakeRisk.metadata)
+    assert response["detections"][0]["class_name"] == "person"
+    assert response["detections"][0]["extra"]["display_label"] == "obstacle"
+    assert "장애물" in response["event"]["warning_text"]
+    assert response["event"]["selected_warning"]["hazard_id"] == prediction["warning"]["hazard_id"]
+
+
+def test_response_priority_uses_engine_selection():
+    prediction = {
+        "warning": {"level": "caution", "source": "object", "detection_index": 1},
+        "detections": [
+            {"detection_index": 0, "display_label": "person", "label_status": "reliable",
+             "reasons": ["path_occupied"]},
+            {"detection_index": 1, "display_label": "bollard", "label_status": "reliable",
+             "reasons": ["approaching"]},
+        ],
+    }
+    assert "볼라드 접근 주의" in warning_summary(prediction)[1]
+    prediction["warning"]["source"] = "surface_object"
+    assert "비보행 영역" in warning_summary(prediction)[1]

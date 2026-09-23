@@ -13,7 +13,7 @@ def draw_risk(frame, prediction, config):
         return draw_review(frame, prediction, config)
     result = draw_scene_regions(frame, prediction)
     h, w = frame.shape[:2]
-    if config["draw_roi"]:
+    if config["draw_roi"] and (prediction.get("camera_view") or {}).get("status") != "unavailable":
         for key, color in (("corridor_polygon",(255,190,0)), ("immediate_polygon",(0,120,255))):
             points = np.rint(np.asarray(config[key])*[w-1,h-1]).astype(np.int32)
             cv2.polylines(result, [points], True, color, 2, cv2.LINE_AA)
@@ -55,7 +55,7 @@ def draw_review(frame, prediction, config):
         cv2.putText(result, message, position, font, size, (0,0,0), weight+3, cv2.LINE_AA)
         cv2.putText(result, message, position, font, size, color, weight, cv2.LINE_AA)
 
-    if config["draw_roi"]:
+    if config["draw_roi"] and (prediction.get("camera_view") or {}).get("status") != "unavailable":
         for key, color, alpha, label in (
             ("corridor_polygon",(255,220,20),.09,"PATH ROI"),
             ("immediate_polygon",(220,40,250),.14,"NEAR ROI")):
@@ -96,7 +96,7 @@ def draw_review(frame, prediction, config):
         identity = f'#{item["track_id"]}' if item["track_id"] is not None else "NEW"
         display_level = "UNKNOWN" if item.get("alert_status") == "uncertain" and level == "monitor" else level.upper()
         grouped = f' x{item.get("warning_group_size",1)}' if item.get("warning_group_size",1)>1 else ""
-        first = f'{display_level} | {item["class_name"]} {identity}{grouped}'
+        first = f'{display_level} | {item.get("display_label", "obstacle")} {identity}{grouped}'
         motion = item.get("motion") or {}
         detail = ""
         if level != "monitor":
@@ -143,7 +143,9 @@ def draw_review(frame, prediction, config):
             cv2.putText(result,line,(left+7,top+(i+1)*line_height),font,size,color,weight,cv2.LINE_AA)
     panel_height=max(110,round(202*scale))
     cv2.rectangle(result,(0,h-panel_height),(w-1,h-1),(16,16,16),-1)
-    scene_warnings=int(bool((prediction.get("surface") or {}).get("alert_level"))) + int(bool(prediction.get("advisories")))
+    scene_warnings=(int(bool((prediction.get("surface") or {}).get("alert_level")))
+                    + int(bool(prediction.get("advisories")))
+                    + int((prediction.get("camera_view") or {}).get("status") in ("uncertain", "unavailable")))
     title=f'DANGER {counts["danger"]}   CAUTION {counts["caution"]+scene_warnings}   MONITOR/UNK {counts["monitor"]}'
     text(title,(16,h-panel_height+round(34*scale)),.95*scale,(255,255,255),max(1,round(2*scale)))
     mode="ON (experimental)" if config["ttc_alerts"] else "LOG ONLY"
@@ -182,6 +184,11 @@ def draw_scene_regions(frame, prediction):
 
 def draw_scene_status(result, prediction, position, scale):
     messages=[]
+    camera_view=prediction.get("camera_view") or {}
+    if camera_view.get("status") == "unavailable":
+        messages.append("CAMERA: point forward")
+    elif camera_view.get("status") == "uncertain":
+        messages.append("CAMERA: steady view")
     surface=prediction.get("surface") or {}
     if surface.get("alert_level"):
         messages.append("PATH: check surroundings" if surface.get("status")=="uncertain" else "PATH: non-walkable area")
