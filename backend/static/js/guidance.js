@@ -1,6 +1,7 @@
-/** 신호 상태와 색상 변화의 안내 정책. 도착·횡단 가능 여부는 자동 판단하지 않는다. */
+/** 신호 상태와 도보 위험 장애물의 음성 안내 정책. */
 (() => {
-  const LIMITS = Object.freeze({ stableMs: 400, stableFrames: 3, maxGapMs: 1000, maxAgeMs: 1500, missingMs: 2000 });
+  const LIMITS = Object.freeze({ stableMs: 400, stableFrames: 3, maxGapMs: 1000, maxAgeMs: 1500,
+    missingMs: 2000, walkingRepeatMs: 5000 });
 
   function create({ player, onChange = () => {}, now = () => performance.now() }) {
     let active = false, sessionId = null, mock = false;
@@ -8,13 +9,14 @@
     let startedAt = 0, lastFrame = null, lastCapture = null, lastValid = null;
     let target = null, color = null, candidate = null, missingAnnounced = false;
     let hasConfirmedSignal = false;
+    let mode = "traffic", walkingEvent = null, walkingAnnouncedAt = -Infinity;
     // 대상 추적 이력과 분리한다. 소실 안내 후 재확인한 경우에만 같은 색을 다시 읽는다.
     let lastAnnouncedColor = null;
 
     function update(text) { onChange({ active, text }); }
     function resetEvidence() { target = null; color = null; candidate = null; }
     function announce(text, validUntil) {
-      const message = mock ? `모의 신호. ${text}` : text;
+      const message = mock && mode === "traffic" ? `모의 신호. ${text}` : text;
       update(message);
       player.speak(message, validUntil);
     }
@@ -27,23 +29,27 @@
       player.cancel();
       update(text);
     }
-    function start(id, isMock = false) {
+    function start(id, isMock = false, nextMode = "traffic") {
       stop();
       active = true;
       initializing = true;
+      mode = nextMode;
       sessionId = id;
       mock = isMock;
       startedAt = now();
       lastFrame = lastCapture = lastValid = null;
+      walkingEvent = null;
+      walkingAnnouncedAt = -Infinity;
       missingAnnounced = false;
-      const message = mock ? "모의 신호. 신호 안내를 시작합니다." : "신호 안내를 시작합니다.";
+      const message = mode === "walking" ? "장애물 안내를 시작합니다."
+        : mock ? "모의 신호. 신호 안내를 시작합니다." : "신호 안내를 시작합니다.";
       update(message);
       // 첫 재생은 사용자 클릭에서 시작하고 완료 전에는 추론 결과로 취소하지 않는다.
       player.speak(message, now() + 8000, { onEnd: () => {
         if (!active || !initializing) return;
         initializing = false;
         startedAt = now();
-        update("안내 대상의 신호를 확인하고 있습니다.");
+        update(mode === "walking" ? "위험 장애물을 확인하고 있습니다." : "안내 대상의 신호를 확인하고 있습니다.");
       } });
     }
     function interrupt() {
@@ -55,7 +61,7 @@
     }
     // 관측 이력만 초기화한다. 재생 중이거나 대기 중인 안내는 끝까지 이어 읽는다.
     function tick() {
-      if (!active || initializing) return;
+      if (!active || initializing || mode === "walking") return;
       const age = now() - (lastValid ?? startedAt);
       if (age > LIMITS.maxGapMs) interrupt();
       if (hasConfirmedSignal && age >= LIMITS.missingMs && !missingAnnounced) {
@@ -77,6 +83,19 @@
       lastFrame = res.frame_id;
       lastCapture = capturedAt;
       const event = res.event || {};
+      if (mode === "walking") {
+        if (event.type !== "walking_warning" || event.level !== "danger" ||
+            !["person","vehicle","obstacle"].includes(event.voice_category) ||
+            !Number.isInteger(event.voice_event_id)) return;
+        const key = `${event.voice_event_id}:${event.voice_category}`;
+        if (walkingEvent === key && capturedAt-walkingAnnouncedAt < LIMITS.walkingRepeatMs) return;
+        walkingEvent = key;
+        walkingAnnouncedAt = capturedAt;
+        const messages = { person:"위험! 사람이 있음.", vehicle:"위험! 차량이 있음.",
+          obstacle:"위험! 장애물이 있음." };
+        announce(messages[event.voice_category],capturedAt+LIMITS.maxAgeMs);
+        return;
+      }
       const index = event.selected_detection_index;
       const selected = Number.isInteger(index) && index >= 0 ? res.detections?.[index] : null;
       if (event.type !== "traffic_signal" || !selected || !Number.isInteger(selected.track_id) ||

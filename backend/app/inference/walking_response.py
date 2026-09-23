@@ -12,6 +12,35 @@ NAMES = {"person":"보행자", "bicycle":"자전거", "car":"차량", "bus":"버
          "table":"탁자", "traffic_light":"신호등", "traffic_sign":"표지판", "movable_obstacle":"이동식 장애물",
          "suitcase":"여행 가방", "skateboard":"스케이트보드", "trash_bin":"쓰레기통"}
 DIRECTIONS = {"left":"왼쪽", "right":"오른쪽", "front":"전방"}
+VEHICLE_CLASSES = {"car", "bus", "truck", "motorcycle"}
+
+
+# 위험 객체의 음성 안내 범주 선택
+def danger_voice_target(prediction):
+    """
+    대표 빨강 경고를 사람·차량·장애물 중 하나로 묶어 음성 안내 정보를 반환한다.
+    """
+    candidates=[]
+    for item in prediction["detections"]:
+        level=item.get("alert_level",item.get("risk_level"))
+        if level != "danger" or not item.get("warning_primary",True):
+            continue
+        event_id=item.get("event_id")
+        if not isinstance(event_id,int) or isinstance(event_id,bool):
+            event_id=item.get("track_id")
+        if not isinstance(event_id,int) or isinstance(event_id,bool):
+            event_id=item.get("detection_index")
+        if not isinstance(event_id,int) or isinstance(event_id,bool):
+            continue
+        name=item["class_name"]
+        category="person" if name=="person" else "vehicle" if name in VEHICLE_CLASSES else "obstacle"
+        detection_index=item.get("detection_index")
+        order=detection_index if isinstance(detection_index,int) and not isinstance(detection_index,bool) else 10**9
+        candidates.append((event_id,order,category))
+    if not candidates:
+        return None
+    event_id,_,category=min(candidates)
+    return {"category":category,"event_id":event_id}
 
 def warning_summary(prediction):
     candidates = []
@@ -65,7 +94,10 @@ def make_response(prediction, shape, class_map, label_ids, metadata):
     counts["tracked"]=sum(d["track_id"] is not None for d in detections)
     event={key:prediction.get(key) for key in ("roi","surface","advisories","warning_groups","timestamp_s","timestamp_valid",
              "state_epoch","state_reset","tracker_status","camera_motion_stable","reset_reason","timestamp_source","frame_gap_s")}
+    voice=danger_voice_target(prediction)
     event.update(type="walking_warning",risk_schema_version=1,warning=bool(message),warning_text=message,level=level,
+                 voice_category=voice["category"] if voice else None,
+                 voice_event_id=voice["event_id"] if voice else None,
                  counts=counts,detected_count=len(detections),in_path_count=sum(d["extra"]["in_path"] for d in detections),
                  risk_events=prediction["events"],config_sha256=metadata["config_sha256"],
                  source_revision=metadata["source_revision"],image_width=w,image_height=h)

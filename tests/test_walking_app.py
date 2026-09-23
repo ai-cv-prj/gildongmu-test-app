@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from backend.app.main import create_app
 from backend.app.config import Settings
 from backend.app.inference.walking_clock import FrameClock
-from backend.app.inference.walking_response import make_response, warning_summary
+from backend.app.inference.walking_response import danger_voice_target, make_response, warning_summary
 from backend.app.inference.risk.risk_config import risk_config
 from backend.app.services.walking_export import frame_timeline, export_video, read_status
 from test_risk import engine, detection
@@ -120,3 +120,15 @@ def test_held_warning_does_not_claim_new_motion():
     item=p["detections"][0]
     item.update(alert_level="danger",alert_status="held")
     assert '이전 경고 유지' in warning_summary(p)[1]
+
+def test_danger_voice_target_groups_person_vehicle_and_obstacle():
+    base={"alert_level":"danger","warning_primary":True,"event_id":7}
+    for class_name,category in [("person","person"),("bus","vehicle"),("bollard","obstacle")]:
+        assert danger_voice_target({"detections":[{**base,"class_name":class_name}]}) == {
+            "category":category,"event_id":7}
+
+def test_danger_voice_target_ignores_caution_and_uses_track_id_fallback():
+    assert danger_voice_target({"detections":[
+        {"alert_level":"caution","warning_primary":True,"event_id":1,"class_name":"person"},
+        {"alert_level":"danger","warning_primary":True,"event_id":None,"track_id":9,"class_name":"car"},
+    ]}) == {"category":"vehicle","event_id":9}

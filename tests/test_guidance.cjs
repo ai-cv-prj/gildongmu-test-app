@@ -280,6 +280,41 @@ test("새 안내는 이전 초록 전환 이력을 재사용하지 않고 모의
   assert.equal(h.messages().at(-1), "모의 신호. 초록불입니다. 다음 초록 신호를 기다려 주세요.");
 });
 
+test("도보 주의 단계는 말하지 않고 위험 단계만 범주에 맞게 안내한다", () => {
+  const h = harness(); h.policy.start("A", false, "walking");
+  const accept=(frameId,at,event) => {
+    h.setTime(at);
+    h.policy.accept({session_id:"A",frame_id:frameId,event},at);
+  };
+  accept(1,0,{type:"walking_warning",level:"caution",voice_category:null,voice_event_id:null});
+  accept(2,200,{type:"walking_warning",level:"danger",voice_category:"person",voice_event_id:11});
+  accept(3,400,{type:"walking_warning",level:"danger",voice_category:"vehicle",voice_event_id:12});
+  accept(4,600,{type:"walking_warning",level:"danger",voice_category:"obstacle",voice_event_id:13});
+  assert.deepEqual(h.messages(), ["장애물 안내를 시작합니다.","위험! 사람이 있음.",
+    "위험! 차량이 있음.","위험! 장애물이 있음."]);
+});
+
+test("같은 도보 위험 객체는 5초 뒤에만 반복하고 새 객체는 즉시 안내한다", () => {
+  const h = harness(); h.policy.start("A", false, "walking");
+  const danger=(frameId,at,eventId) => {
+    h.setTime(at);
+    h.policy.accept({session_id:"A",frame_id:frameId,
+      event:{type:"walking_warning",level:"danger",voice_category:"person",voice_event_id:eventId}},at);
+  };
+  danger(1,0,7); danger(2,1000,7); danger(3,4999,7); danger(4,5000,7); danger(5,5200,8);
+  assert.deepEqual(h.messages(), ["장애물 안내를 시작합니다.","위험! 사람이 있음.",
+    "위험! 사람이 있음.","위험! 사람이 있음."]);
+});
+
+test("위험 장애물 음원만 5배속으로 재생한다", () => {
+  const h = ttsHarness();
+  h.player.speak("위험! 사람이 있음.");
+  assert.equal(h.plays[0].playbackRate,5);
+  h.plays[0].start(); h.plays[0].end();
+  h.player.speak("빨간불입니다.");
+  assert.equal(h.plays[1].playbackRate,1);
+});
+
 function ttsHarness({ supported = true } = {}) {
   const media = require("./helpers/audio.cjs").audioHarness();
   const errors = [], statuses = [], timers = new Map();
@@ -366,12 +401,13 @@ test("일반·모의·음성 확인 문구 전부 실제 포함된 MP3에 대응
   const h = ttsHarness();
   const root = "backend/static/audio/ko-v1/";
   const { clips } = JSON.parse(fs.readFileSync(root + "manifest.json", "utf8"));
-  assert.equal(Object.keys(clips).length, 15);
+  assert.equal(Object.keys(clips).length, 19);
   assert.deepEqual(fs.readdirSync(root).filter(name => name.endsWith(".mp3")).sort(),
     Object.keys(clips).sort());
   for (const [filename, text] of Object.entries(clips)) {
     assert.equal(h.player.speak(text), true);
-    assert.equal(h.plays.at(-1).src, "/static/audio/ko-v1/" + filename);
+    const version = filename.startsWith("danger-") ? "?v=walking-audio-v2" : "";
+    assert.equal(h.plays.at(-1).src, "/static/audio/ko-v1/" + filename + version);
     h.plays.at(-1).start(); h.plays.at(-1).end();
     const bytes = fs.readFileSync(root + filename);
     assert.ok(bytes.length > 1000);
