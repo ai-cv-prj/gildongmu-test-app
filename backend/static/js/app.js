@@ -69,7 +69,7 @@
   // 검출 및 보행가능·횡단보도 영역 요약 표시
   /** 결과 종류에 맞춰 검출 목록 또는 보행가능·횡단보도 영역 비율을 보여준다. */
   function showResult(res) {
-    const dets = res.detections || [];
+    const dets = (res.detections || []).filter(d => d.class_name !== "crosswalk");
     el.resultRow.innerHTML = dets.length
       ? dets.map((d) => {
         const display = GOverlay.describeDetection(d);
@@ -102,8 +102,6 @@
         }
         text = count ? `신호등 ${count}개 검출 · ${detail}` : detail;
       }
-      const crosswalkText = GOverlay.describeCrosswalkEvent(ev);
-      if (crosswalkText) text += ` / ${crosswalkText}`;
     } else if (ev.type === "walking_warning") {
       if (ev.warning) { tone = ev.level === "danger" ? "red" : "warn"; text = ev.warning_text || "장애물 주의"; }
     } else if (ev.type === "bus_detection") {
