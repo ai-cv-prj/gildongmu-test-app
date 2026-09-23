@@ -11,7 +11,7 @@ function audioHarness({ onPlay = () => {} } = {}) {
       const onplaying = this.onplaying, onended = this.onended, onerror = this.onerror;
       return new Promise((resolve, reject) => {
         plays.push({
-          src: this.src, resolve, reject,
+          src: this.src, playbackRate: this.playbackRate, resolve, reject,
           start: () => { onplaying?.(); resolve(); },
           end: () => { this.ended = true; onended?.(); },
           error: (code) => { this.error = { code }; onerror?.(); },

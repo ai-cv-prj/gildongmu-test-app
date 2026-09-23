@@ -12,6 +12,35 @@ NAMES = {"person":"보행자", "bicycle":"자전거", "car":"차량", "bus":"버
          "table":"탁자", "traffic_light":"신호등", "traffic_sign":"표지판", "movable_obstacle":"이동식 장애물",
          "suitcase":"여행 가방", "skateboard":"스케이트보드", "trash_bin":"쓰레기통"}
 DIRECTIONS = {"left":"왼쪽", "right":"오른쪽", "front":"전방"}
+VEHICLE_CLASSES = {"car", "bus", "truck", "motorcycle"}
+
+
+# 위험 객체의 음성 안내 범주 선택
+def danger_voice_target(prediction):
+    """
+    화면 문구가 가리키는 그 위험을 사람·차량·장애물 중 하나로 묶어 음성 안내 정보를 반환한다.
+    엔진이 고른 대표 경고를 그대로 따르므로 음성과 화면이 서로 다른 대상을 가리키지 않는다.
+    클래스가 안정적으로 확인되기 전에는 화면과 같이 장애물로 안내한다.
+    """
+    selected=prediction.get("warning") or {}
+    if selected.get("level") != "danger":
+        return None
+    index=selected.get("detection_index")
+    if not isinstance(index,int) or isinstance(index,bool):
+        # 촬영 불가 안내처럼 대상 객체가 없는 위험은 음성으로 내보내지 않는다.
+        return None
+    item=next((d for d in prediction.get("detections",[])
+               if d.get("detection_index")==index),None)
+    if item is None or item.get("alert_level",item.get("risk_level")) != "danger":
+        return None
+    event_id=item.get("event_id")
+    if not isinstance(event_id,int) or isinstance(event_id,bool):
+        event_id=item.get("track_id")
+    if not isinstance(event_id,int) or isinstance(event_id,bool):
+        event_id=index
+    name=item.get("display_label") if item.get("label_status")=="reliable" else "obstacle"
+    category="person" if name=="person" else "vehicle" if name in VEHICLE_CLASSES else "obstacle"
+    return {"category":category,"event_id":event_id}
 
 def warning_summary(prediction):
     selected = prediction.get("warning") or {}
@@ -87,7 +116,10 @@ def make_response(prediction, shape, class_map, label_ids, metadata):
              "state_epoch","state_reset","tracker_status","camera_motion_stable","camera_view","view_recovered",
              "reset_reason","timestamp_source","frame_gap_s")}
     event["selected_warning"] = prediction.get("warning")
+    voice=danger_voice_target(prediction)
     event.update(type="walking_warning",risk_schema_version=1,warning=bool(message),warning_text=message,level=level,
+                 voice_category=voice["category"] if voice else None,
+                 voice_event_id=voice["event_id"] if voice else None,
                  counts=counts,detected_count=len(detections),in_path_count=sum(d["extra"]["in_path"] for d in detections),
                  risk_events=prediction["events"],config_sha256=metadata["config_sha256"],
                  source_revision=metadata["source_revision"],image_width=w,image_height=h)

@@ -69,7 +69,7 @@
   // 검출 및 보행가능·횡단보도 영역 요약 표시
   /** 결과 종류에 맞춰 검출 목록 또는 보행가능·횡단보도 영역 비율을 보여준다. */
   function showResult(res) {
-    const dets = res.detections || [];
+    const dets = (res.detections || []).filter(d => d.class_name !== "crosswalk");
     el.resultRow.innerHTML = dets.length
       ? dets.map((d) => {
         const display = GOverlay.describeDetection(d);
@@ -104,8 +104,6 @@
         }
         text = count ? `신호등 ${count}개 검출 · ${detail}` : detail;
       }
-      const crosswalkText = GOverlay.describeCrosswalkEvent(ev);
-      if (crosswalkText) text += ` / ${crosswalkText}`;
     } else if (ev.type === "walking_warning") {
       if (ev.warning) { tone = ev.level === "danger" ? "red" : "warn"; text = ev.warning_text || "장애물 주의"; }
     } else if (ev.type === "bus_detection") {
@@ -137,7 +135,8 @@
     try { localStorage.setItem("gildongmu.prefs", JSON.stringify({ mode: state.mode, device: currentDevice(), voiceEnabled: state.voiceEnabled })); } catch (_) { /* 설정 저장 실패는 무시 */ }
   }
   function idleVoiceText() {
-    return state.voiceEnabled ? "음성 안내가 켜져 있습니다. 테스트를 시작하면 신호를 읽습니다." : "음성 안내가 꺼져 있습니다.";
+    const action = state.mode === "walking" ? "위험 장애물을 안내합니다" : "신호를 읽습니다";
+    return state.voiceEnabled ? `음성 안내가 켜져 있습니다. 테스트를 시작하면 ${action}.` : "음성 안내가 꺼져 있습니다.";
   }
 
   function selectMode(mode, refill = true) {
@@ -174,8 +173,8 @@
     const locked = state.running || !!state.sessionId;
     el.setup.hidden = locked;
     el.runInfo.hidden = !locked;
-    el.guidancePanel.hidden = state.mode !== "traffic";
-    el.btnMute.disabled = state.mode !== "traffic";
+    el.guidancePanel.hidden = !["traffic","walking"].includes(state.mode);
+    el.btnMute.disabled = !["traffic","walking"].includes(state.mode);
     el.btnMute.textContent = state.voiceEnabled ? "음성 끄기" : "음성 켜기";
   }
 
@@ -250,7 +249,9 @@
     try {
       // 켜기로 선택된 경우 사용자 클릭 안에서 재생을 요청한다.
       const selectedModel = state.models.find(m => m.id === body.model_id);
-      if (state.mode === "traffic" && state.voiceEnabled) guidance.start(null, !!selectedModel?.is_mock);
+      if (["traffic","walking"].includes(state.mode) && state.voiceEnabled) {
+        guidance.start(null, !!selectedModel?.is_mock, state.mode);
+      }
       else guidance.stop();
       const r = await GApi.createSession(body);
       state.sessionId = r.session_id;
@@ -508,12 +509,12 @@
     player.speak("음성 확인입니다. 이 문장이 들리면 신호 안내를 사용할 수 있습니다.");
   });
   el.btnMute.addEventListener("click", () => {
-    if (state.mode !== "traffic") return;
+    if (!["traffic","walking"].includes(state.mode)) return;
     state.voiceEnabled = !state.voiceEnabled;
     savePrefs();
     if (state.voiceEnabled && (state.running || state.starting) && !state.stopping && state.cameraOn && !document.hidden) {
       const model = state.models.find(m => m.id === el.modelSelect.value);
-      guidance.start(state.sessionId, !!model?.is_mock);
+      guidance.start(state.sessionId, !!model?.is_mock, state.mode);
     } else guidance.stop(state.voiceEnabled && (state.running || state.starting)
       ? "음성 안내가 켜져 있습니다. 화면과 카메라가 준비되면 음성을 껐다 켜 주세요." : idleVoiceText());
   });

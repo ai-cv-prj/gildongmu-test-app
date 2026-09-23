@@ -36,17 +36,22 @@ class FieldWarningRevisionTests(unittest.TestCase):
         self.assertGreater(low["path_top_y"], high["path_top_y"])
 
     def test_wide_side_contact_is_caution_central_contact_is_danger(self):
-        side = engine(config=CFG).update(
-            FRAME, [detection((78, 50, 95, 85))], 0)["detections"][0]
-        center = engine(config=CFG).update(
-            FRAME, [detection((42, 50, 58, 85))], 0)["detections"][0]
+        # SESAC-86의 보행불가 주변 필터가 켜져 있으므로 마스크 없이는 danger가 나올 수 없다.
+        # 이 테스트가 보는 것은 ROI 폭이지 주변 보행 가능 여부가 아니므로 보행 가능 지면을 준다.
+        walkable = np.ones((100, 100), np.uint8)
+
+        def assess(box):
+            return engine(config=CFG).update(FRAME, [detection(box)], 0,
+                                             class_map=walkable,
+                                             label_ids=LABELS)["detections"][0]
+
+        side = assess((78, 50, 95, 85))
+        center = assess((42, 50, 58, 85))
         self.assertEqual(side["risk_level"], "caution")
         self.assertIn("near_path_side_candidate", side["reasons"])
         self.assertEqual(center["risk_level"], "danger")
         self.assertGreaterEqual(side["geometry"]["immediate_overlap"], .2)
-        very_close_side = engine(config=CFG).update(
-            FRAME, [detection((78, 35, 96, 91))], 0)["detections"][0]
-        self.assertEqual(very_close_side["risk_level"], "danger")
+        self.assertEqual(assess((78, 35, 96, 91))["risk_level"], "danger")
 
     def test_occlusion_does_not_immediately_shrink_visible_roi(self):
         e = engine(config=CFG)

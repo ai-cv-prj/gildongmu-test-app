@@ -125,7 +125,7 @@ https://random-words-here.trycloudflare.com
 
 테스트 중에는 기능과 모델을 바꿀 수 없습니다. 바꾸려면 종료한 뒤 다시 시작합니다. 화면을 끄거나 다른 앱으로 넘어가면 전송이 일시정지되고, 돌아오면 이어집니다.
 
-신호등 모드에서는 검출한 신호등과 횡단보도를 표시하고, 최종 선택된 신호등에 `안내 대상` 문구를 붙입니다. `안내 대상 선택 불가`는 검출 결과가 있어도 안내할 신호등을 정하지 못했다는 뜻입니다.
+신호등 모드에서는 검출한 신호등을 표시하고, 최종 선택된 신호등에 `안내 대상` 문구를 붙입니다. 횡단보도는 내부적으로 인식해 신호등 선택에 사용하지만 화면의 박스·검출 목록·진단 문구에는 표시하지 않습니다. `안내 대상 선택 불가`는 검출 결과가 있어도 안내할 신호등을 정하지 못했다는 뜻입니다.
 
 신호등 음성은 **테스트 전·중·후 언제든 `음성 끄기` / `음성 켜기`로 선택할 수 있습니다.** 기본값은 켜기이며 선택은 브라우저에 저장됩니다. 켜둔 상태에서 테스트를 시작하면 자동 안내하고, 꺼두면 시작 음성도 재생하지 않습니다. 테스트 전에는 `음성 확인`으로 소리만 확인할 수 있습니다. 앱에 포함된 한국어 MP3 음원을 재생하며 Mock에서는 “모의 신호”를 붙입니다. 화면을 숨기거나 카메라·테스트가 종료되면 안내도 종료됩니다. 재생 상태와 오류는 안내 패널에 표시됩니다.
 
@@ -225,10 +225,28 @@ WSL 안에서 서버를 켜도 Windows 브라우저에서 http://127.0.0.1:8000 
 
 ### 5-2. 가중치 파일 넣기
 
-```bash
-cp ~/내학습폴더/runs/detect/train/weights/best.pt backend/models/traffic/
+**`git clone`이나 `git pull`로는 모델 가중치가 다운로드되지 않습니다.** `backend/models/`의 가중치는 Git 관리 대상에서 제외되어 있습니다. 저장소에 가중치 다운로드 링크는 없으므로, 모델 공유자에게 드라이브 등의 공유 링크나 파일을 별도로 받아야 합니다.
+
+현재 신호등 모델을 실행하려면 아래 **두 파일을 모두** 받아 저장소 루트 기준으로 배치하세요. `classifier/` 폴더가 없으면 직접 만듭니다.
+
+```text
+backend/models/traffic/
+├── best_YOLO_v2.pt              # 신호등·횡단보도 검출
+└── classifier/
+    └── best_MobileNet.pt        # 신호등 색상 분류
 ```
 
+예를 들어 두 파일을 `~/Downloads/`에 다운로드했다면 WSL/Linux에서 다음과 같이 복사합니다.
+
+```bash
+mkdir -p backend/models/traffic/classifier
+cp ~/Downloads/best_YOLO_v2.pt backend/models/traffic/
+cp ~/Downloads/best_MobileNet.pt backend/models/traffic/classifier/
+```
+
+Windows에서도 탐색기로 같은 폴더 구조에 파일을 넣으면 됩니다. `best_MobileNet.pt`는 반드시 `classifier/` 하위 폴더에 해당 이름으로 넣어야 합니다. 이 파일이 없으면 YOLO가 모델 목록에 보여도 테스트 시작 시 로딩에 실패합니다. 분류기 파일은 별도의 선택 항목으로 표시되지 않고, 선택한 YOLO 모델과 함께 로딩됩니다.
+
+- 현재 신호등 파이프라인은 Ultralytics YOLO `.pt` 검출 가중치를 사용합니다. `best_YOLO_v2.pt`가 있으면 화면에서 기본으로 선택됩니다.
 - 확장자가 `.pt` `.pth` `.onnx` `.engine` 인 파일은 자동으로 인식되어 화면의 모델 목록에 **파일 이름 그대로** 뜹니다. 서버를 재시작할 필요 없이 휴대폰에서 새로고침하면 됩니다.
 - **가중치를 바꿔 비교하려면 파일을 여러 개 넣으세요.** `best_v1.pt`, `best_v2_aug.pt` 처럼 이름으로 구분하면 각각 선택지가 되고, 어떤 파일로 찍은 기록인지 세션 요약에 파일 이름과 해시가 남습니다.
 - 파일 이름에는 영문, 숫자, `-`, `_` 만 쓰는 것을 권장합니다.
@@ -236,8 +254,9 @@ cp ~/내학습폴더/runs/detect/train/weights/best.pt backend/models/traffic/
 
 ```bash
 .venv/bin/python scripts/check_model.py --list
-# O  traffic-best                 신호등 · best.pt   [backend/models/traffic/best.pt]
 ```
+
+목록에서 `best_YOLO_v2.pt`가 인식되는지 확인하세요. 목록 조회는 분류기 로딩까지 검사하지 않으므로, 두 파일을 배치한 뒤 앱에서 신호등 모델을 선택하고 테스트를 시작해 로딩도 확인합니다.
 
 ### 5-3. 추론 코드 넣기
 
@@ -424,7 +443,7 @@ backend/data/sessions/
 .venv/bin/python scripts/visualize_session.py backend/data/sessions/20260918_*_traffic --combine backend/data/sessions/20260918_results.mp4
 ```
 
-화면에 그리는 박스는 `results.jsonl`의 `detections` 목록입니다. 새 신호등 테스트 결과에는 횡단보도 박스·신뢰도·실패 사유도 저장되어 내보낸 영상에 표시됩니다. 횡단보도 개수만 저장한 과거 기록은 원본 이미지를 재추론해야 횡단보도 박스를 볼 수 있습니다.
+이 스크립트로 내보낸 영상에 그리는 박스는 `results.jsonl`의 `detections` 목록입니다. 새 신호등 테스트 결과에는 횡단보도 박스·신뢰도·실패 사유도 저장되어 내보낸 영상에 표시됩니다. 실시간 화면과 그 화면을 합성한 WebM 녹화에서는 횡단보도 박스를 숨깁니다. 횡단보도 개수만 저장한 과거 기록은 원본 이미지를 재추론해야 횡단보도 박스를 볼 수 있습니다.
 
 결과 파일 읽기 예시:
 

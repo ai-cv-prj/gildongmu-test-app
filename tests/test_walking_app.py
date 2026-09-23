@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from backend.app.main import create_app
 from backend.app.config import Settings
 from backend.app.inference.walking_clock import FrameClock
-from backend.app.inference.walking_response import make_response, warning_summary
+from backend.app.inference.walking_response import danger_voice_target, make_response, warning_summary
 from backend.app.inference.risk.risk_config import risk_config
 from backend.app.services.walking_export import frame_timeline, export_video, read_status
 from test_risk import engine, detection
@@ -160,3 +160,32 @@ def test_response_priority_uses_engine_selection():
     assert "볼라드 접근 주의" in warning_summary(prediction)[1]
     prediction["warning"]["source"] = "surface_object"
     assert "비보행 영역" in warning_summary(prediction)[1]
+
+
+def test_danger_voice_target_groups_person_vehicle_and_obstacle():
+    base={"alert_level":"danger","warning_primary":True,"event_id":7,
+          "detection_index":0,"label_status":"reliable"}
+    for class_name,category in [("person","person"),("bus","vehicle"),("bollard","obstacle")]:
+        assert danger_voice_target({
+            "warning":{"level":"danger","detection_index":0},
+            "detections":[{**base,"class_name":class_name,"display_label":class_name}],
+        }) == {"category":category,"event_id":7}
+
+def test_danger_voice_target_ignores_caution_and_uses_track_id_fallback():
+    assert danger_voice_target({"warning":{"level":"danger","detection_index":1},"detections":[
+        {"detection_index":0,"alert_level":"caution","warning_primary":True,"event_id":1,
+         "class_name":"person","display_label":"person","label_status":"reliable"},
+        {"detection_index":1,"alert_level":"danger","warning_primary":True,"event_id":None,
+         "track_id":9,"class_name":"car","display_label":"car","label_status":"reliable"},
+    ]}) == {"category":"vehicle","event_id":9}
+
+def test_danger_voice_target_follows_screen_label_when_class_unconfirmed():
+    # 화면이 "장애물"이라고 말하는 동안 음성이 "보행자"라고 하면 안 된다.
+    assert danger_voice_target({"warning":{"level":"danger","detection_index":0},"detections":[
+        {"detection_index":0,"alert_level":"danger","warning_primary":True,"event_id":3,
+         "class_name":"person","display_label":"obstacle","label_status":"provisional"},
+    ]}) == {"category":"obstacle","event_id":3}
+
+def test_danger_voice_target_is_silent_without_a_hazard_object():
+    assert danger_voice_target({"warning":{"level":"danger","source":"camera_view",
+                                           "detection_index":None},"detections":[]}) is None

@@ -111,12 +111,12 @@ test("페이지는 통합 API를 앱보다 먼저 로드하고 삭제한 파일�
   const html = fs.readFileSync("backend/static/index.html", "utf8");
   const app = fs.readFileSync("backend/static/js/app.js", "utf8");
   const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((match) => match[1]);
-  assert.equal(scripts.length, 7);
+  assert.equal(scripts.length, 8);
   assert.equal(scripts[0], "/static/js/api.js?v=latency-v3-cleanup");
-  assert.equal(scripts.at(-1), "/static/js/app.js?v=walking-risk-v1");
-  assert.ok(scripts.indexOf("/static/js/tts.js?v=traffic-audio-v13") >= 0);
-  assert.ok(scripts.indexOf("/static/js/tts.js?v=traffic-audio-v13") < scripts.length - 1);
-  assert.ok(scripts.includes("/static/js/guidance.js?v=traffic-audio-v13"));
+  assert.equal(scripts.at(-1), "/static/js/app.js?v=traffic-display-v14");
+  assert.ok(scripts.indexOf("/static/js/tts.js?v=walking-audio-v5") >= 0);
+  assert.ok(scripts.indexOf("/static/js/tts.js?v=walking-audio-v5") < scripts.length - 1);
+  assert.ok(scripts.includes("/static/js/guidance.js?v=walking-audio-v5"));
   assert.equal(fs.existsSync("backend/static/js/timings.js"), false);
   assert.doesNotMatch(html, /\/js\/timings\.js/);
   assert.doesNotMatch(app, /GTimings/);
@@ -334,12 +334,14 @@ async function appHarness(mode = "walking", { start = true, prefs = {}, storageA
       Audio: media.Audio,
     },
     document: { getElementById: node, querySelector: node, hidden: false, visibilityState: "visible", addEventListener(name, fn) { visibilityHandlers[name] = fn; } },
-    performance: { now: () => now }, Date: { now: () => 1000 + now },
+    performance: { now: () => now, timeOrigin: 1000 }, Date: { now: () => 1000 + now },
     localStorage: {
       getItem: () => { if (!storageAvailable) throw new Error("unavailable"); return storedPrefs; },
       setItem: (key, value) => { if (!storageAvailable) throw new Error("unavailable"); storedPrefs = value; },
     }, navigator: {}, screen: {},
-    setInterval() {}, setTimeout: (fn, ms) => { sleeps.push({ fn, ms }); }, clearTimeout() {},
+    setInterval() {},
+    setTimeout: (fn, ms) => { const timer = { fn, ms }; sleeps.push(timer); return timer; },
+    clearTimeout: (timer) => { const index = sleeps.indexOf(timer); if (index >= 0) sleeps.splice(index, 1); },
     GCamera: {
       setOnEnded() {}, start: async () => {}, active: () => true,
       captureBackend: () => "worker",
@@ -382,6 +384,11 @@ async function appHarness(mode = "walking", { start = true, prefs = {}, storageA
   if (start) {
     await node("btn-camera").handlers.click();
     await node("btn-start").handlers.click();
+    // 도보 기본 시작 음성을 끝내 일반 프레임 테스트가 음성 로딩 타이머와 섞이지 않게 한다.
+    if (mode === "walking" && media.plays[0]) {
+      media.plays[0].start();
+      media.plays[0].end();
+    }
   }
   return {
     tracked, calls, sleeps, node, captureOptions, sessionSettings, sessionClient, played: media.plays,
@@ -402,7 +409,7 @@ test("640px 전송 설정을 실제 캡처와 세션 기록에 동일하게 적�
   assert.equal(app.sessionSettings.image_max_side, 640);
   assert.equal(app.sessionSettings.jpeg_quality, 0.8);
   assert.equal(app.sessionSettings.target_fps, 10);
-  assert.equal(app.sessionSettings.confidence, 0.4);
+  assert.equal(app.sessionSettings.confidence, 0.25);
   assert.equal(app.sessionClient.app_version, "walking-risk-v1");
   const stopping = app.stop();
   app.captured();
@@ -618,11 +625,12 @@ test("음원 로딩 실패는 안내 상태를 종료하고 다시 시작할 수
   const stopping = app.stop(); app.captured(); await stopping;
 });
 
-test("다른 기능에서는 신호 안내 패널을 숨기고 음성 켜기도 무시한다", async () => {
+test("도보 장애물 테스트에서도 음성 패널을 표시하고 시작 안내를 재생한다", async () => {
   const app = await appHarness("walking");
-  assert.equal(app.node("guidance-panel").hidden, true);
-  app.node("btn-mute").handlers.click();
-  assert.equal(app.played.length, 0);
+  assert.equal(app.node("guidance-panel").hidden, false);
+  assert.equal(app.node("btn-mute").disabled, false);
+  assert.equal(app.played.length, 1);
+  assert.equal(app.played[0].src, "/static/audio/ko-v1/walking-startup.mp3");
   const stopping = app.stop(); app.captured(); await stopping;
 });
 
