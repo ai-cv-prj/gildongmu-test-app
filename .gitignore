@@ -1,16 +1,29 @@
+# Python 환경·캐시
 .venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# 환경변수
 .env
+
+# 데이터·모델 가중치
 backend/data/
 backend/models/**
+
+# .gitkeep 유지
 !backend/models/*/
 !backend/models/*/.gitkeep
+
+# Node 의존성
 node_modules/
+
+# 작업 결과물
 screenshots/
 check_output/
 workbench/
+
+# 개발 도구 설정
 .agents/
 AGENTS.md
-.vscode
+.vscode/
