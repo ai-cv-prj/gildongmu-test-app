@@ -12,7 +12,7 @@
     deviceSelect: $("device-select"), deviceCustom: $("device-custom"), note: $("note"),
     btnCamera: $("btn-camera"), btnStart: $("btn-start"), btnStop: $("btn-stop"),
     summary: $("summary"), sId: $("s-id"), sFrames: $("s-frames"), sAvg: $("s-avg"), sPath: $("s-path"),
-    alert: $("alert"),
+    alert: $("alert"), exportStatus: $("export-status"), maskToggle: $("walking-mask-toggle"),
   };
 
   const SETTINGS = { confidence: 0.4, image_max_side: 960, target_fps: 5, jpeg_quality: 0.8, timeout_ms: 5000, retry_wait_ms: 500 };
@@ -54,6 +54,10 @@
       }).join("")
       : `<span class="muted">검출 없음 · frame ${res.frame_id}</span>`;
     const ev = res.event || {};
+    if (ev.risk_schema_version) {
+      const c = ev.counts || {};
+      el.resultRow.textContent = `위험 ${c.danger || 0} · 주의 ${(c.caution || 0) + (c.surface || 0) + (c.advisories || 0)} · 관측 ${c.monitor || 0} · 추적 ${c.tracked || 0}`;
+    }
     if (ev.type === "walking_warning" && Number.isFinite(ev.walkable_ratio)) {
       const crosswalk = Number.isFinite(ev.crosswalk_ratio)
         ? ` · 횡단보도(핑크) ${(ev.crosswalk_ratio * 100).toFixed(1)}%` : "";
@@ -64,7 +68,7 @@
       tone = ev.signal_state === "green" ? "green" : ev.signal_state === "red" ? "red" : "";
       text = { green: "초록불", red: "빨간불", unknown: "신호 인식 안 됨" }[ev.signal_state] || "";
     } else if (ev.type === "walking_warning") {
-      if (ev.warning) { tone = "warn"; text = ev.warning_text || "장애물 주의"; }
+      if (ev.warning) { tone = ev.level === "danger" ? "red" : "warn"; text = ev.warning_text || "장애물 주의"; }
     } else if (ev.type === "bus_detection") {
       if (ev.bus_number) { tone = ev.is_target ? "green" : ""; text = `버스 ${ev.bus_number}${ev.is_target ? " · 목표 버스" : ""}`; }
     }
@@ -93,6 +97,7 @@
 
   function selectMode(mode, refill = true) {
     state.mode = mode;
+    el.maskToggle.hidden = mode !== "walking";
     [...el.modeSeg.querySelectorAll("button")].forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
     if (refill) fillModels();
   }
@@ -181,7 +186,7 @@
       model_id: el.modelSelect.value,
       device_type: currentDevice(),
       note: el.note.value.trim(),
-      settings: { confidence: SETTINGS.confidence, image_max_side: SETTINGS.image_max_side, target_fps: SETTINGS.target_fps, jpeg_quality: SETTINGS.jpeg_quality },
+      settings: { confidence: state.mode === "walking" ? 0.25 : SETTINGS.confidence, image_max_side: SETTINGS.image_max_side, target_fps: SETTINGS.target_fps, jpeg_quality: SETTINGS.jpeg_quality },
       client: { user_agent: navigator.userAgent, screen_width: screen.width, screen_height: screen.height, platform: navigator.platform || "" },
     };
     try {
@@ -231,7 +236,12 @@
       const r = await GApi.stopSession(state.sessionId);
       const s = r.session;
       el.sId.textContent = s.id;
-      el.sFrames.textContent = `${s.frame_count}장 저장 · 실패 ${s.error_count}`;
+      el.sFrames.textContent = s.mode === "walking" && s.export
+        ? `원본 ${s.raw_frame_count}장 · 분석 성공 ${s.frame_count} · 실패 ${s.error_count}`
+        : `${s.frame_count}장 저장 · 실패 ${s.error_count}`;
+      document.querySelector(".summary-title").lastChild.textContent = s.export ? "원본 저장 · 결과 영상 생성 중" : "저장 완료";
+      el.exportStatus.hidden = !s.export;
+      if (s.export) watchExport(s.id);
       el.sAvg.textContent = `${fmt(s.average_inference_ms)} ms / ${fmt(s.average_server_ms)} ms (p95 ${fmt(s.p95_server_ms)} ms)`;
       el.sPath.textContent = s.storage_path;
       el.summary.hidden = false;
@@ -270,10 +280,11 @@
       if (paused) { paused = false; setBadge("running", "테스트 중"); showAlert(null); }
 
       const t0 = performance.now();
+      const captureStarted = Math.round(performance.timeOrigin + performance.now());
       const blob = await GCamera.capture(SETTINGS.image_max_side, SETTINGS.jpeg_quality);
       if (!blob) { await sleep(100); continue; }
       const frameId = ++state.frameId;
-      const capturedAt = Date.now();
+      const capturedAt = state.mode === "walking" ? captureStarted : Date.now();
       try {
         const res = await GApi.uploadFrame(state.sessionId, blob, frameId, capturedAt, SETTINGS.timeout_ms);
         if (!state.running) break;
@@ -311,6 +322,42 @@
       if (remain > 0) await sleep(remain);
     }
   }
+
+  async function watchExport(id) {
+    if (el.sId.textContent !== id) return;
+    try {
+      const s = await GApi.getSession(id);
+      if (el.sId.textContent !== id) return;
+      const e = s.export || {};
+      el.exportStatus.replaceChildren();
+      const title = document.querySelector(".summary-title").lastChild;
+      if (e.state === "ready") {
+        title.textContent = "원본·결과 영상 저장 완료";
+        const link = document.createElement("a");
+        link.href = GApi.resultVideoUrl(id);
+        link.textContent = `결과 영상 다운로드 · 원본 ${e.frame_count}장`;
+        el.exportStatus.append(link);
+      } else if (e.state === "failed") {
+        title.textContent = "원본 저장 · 결과 영상 생성 실패";
+        el.exportStatus.append(document.createTextNode(e.error || "결과 영상 생성 실패"));
+        const retry = document.createElement("button");
+        retry.type = "button"; retry.textContent = "영상 생성 다시 시도";
+        retry.onclick = async () => {
+          retry.disabled = true;
+          try { await GApi.retryExport(id); watchExport(id); }
+          catch (err) { retry.disabled = false; showAlert(err.message); }
+        };
+        el.exportStatus.append(retry);
+      } else {
+        el.exportStatus.textContent = "결과 영상 생성 중…";
+        setTimeout(() => watchExport(id), 1500);
+      }
+    } catch (e) {
+      el.exportStatus.textContent = "결과 영상 상태 확인 중…";
+      setTimeout(() => watchExport(id), 3000);
+    }
+  }
+  el.maskToggle.querySelector("input").addEventListener("change", (e) => GOverlay.setWalkingMaskEnabled(e.target.checked));
 
   // ---------- 이벤트 ----------
   el.modeSeg.addEventListener("click", (e) => {

@@ -87,6 +87,7 @@
         <div class="badge" id="session-badge" data-state="idle">대기</div>
         <div class="event-banner" id="event-banner" hidden></div>
       </div>
+      <label id="walking-mask-toggle" hidden><input type="checkbox" checked /> 보도 마스크 표시</label>
       <div class="result-row" id="result-row">
         <span class="muted">최근 결과 없음</span>
       </div>
@@ -109,6 +110,7 @@
         <dt>평균 추론 / 서버</dt><dd id="s-avg"></dd>
         <dt>저장 위치</dt><dd id="s-path" class="mono"></dd>
       </dl>
+      <div id="export-status" hidden></div>
     </section>
 
     <div class="alert" id="alert" hidden></div>
@@ -124,6 +126,7 @@
 
   <script src="/static/js/api.js"></script>
   <script src="/static/js/camera.js"></script>
+  <script src="/static/js/walking_overlay.js"></script>
   <script src="/static/js/overlay.js"></script>
   <script src="/static/js/recorder.js"></script>
   <script src="/static/js/app.js"></script>

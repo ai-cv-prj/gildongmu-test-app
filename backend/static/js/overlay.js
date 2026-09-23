@@ -9,6 +9,8 @@ window.GOverlay = (() => {
   const ctx = canvas.getContext("2d");
   const COLORS = ["#4f8cff", "#34c759", "#ffb020", "#ff4d4f", "#b57bff", "#22c9c9"];
   let drawVersion = 0;
+  let walkingMaskEnabled = true;
+  let lastWalking = null;
 
   function describeDetection(d) {
     const state = d.class_name === "pedestrian_signal" ? d.extra?.signal_state : null;
@@ -52,6 +54,7 @@ window.GOverlay = (() => {
   /** 화면을 지우고 아직 디코딩 중인 마스크를 무효화한다. */
   function clear() {
     drawVersion += 1;
+    lastWalking = null;
     const { w, h } = fit();
     ctx.clearRect(0, 0, w, h);
   }
@@ -60,6 +63,28 @@ window.GOverlay = (() => {
   /** 박스를 그리거나 PNG 디코딩 후 최신 요청의 초록색·핑크색 마스크를 그린다. */
   function draw(detections, event = {}) {
     const version = ++drawVersion;
+    if (event.risk_schema_version) {
+      lastWalking = { detections, event };
+      const paint = (mask) => {
+        if (version !== drawVersion) return;
+        const { w, h } = fit();
+        const r = contentRect(w, h);
+        ctx.clearRect(0, 0, w, h);
+        // A rotated/restarted camera must not reuse geometry from another aspect ratio.
+        if (Math.abs(event.image_width / event.image_height - r.w / r.h) > 0.04) return;
+        if (mask && walkingMaskEnabled) ctx.drawImage(mask, r.x, r.y, r.w, r.h);
+        GWalkingOverlay.draw(ctx, r, detections, event);
+      };
+      paint(null);
+      if (event.mask_png && walkingMaskEnabled) {
+        const mask = new Image();
+        mask.onload = () => paint(mask);
+        mask.onerror = () => paint(null);
+        mask.src = `data:image/png;base64,${event.mask_png}`;
+      }
+      return;
+    }
+    lastWalking = null;
     if (event.mask_png) {
       const mask = new Image();
       mask.onload = () => {
@@ -99,5 +124,9 @@ window.GOverlay = (() => {
   }
 
   window.addEventListener("resize", () => fit());
-  return { draw, clear, describeDetection };
+  function setWalkingMaskEnabled(enabled) {
+    walkingMaskEnabled = !!enabled;
+    if (lastWalking) draw(lastWalking.detections, lastWalking.event);
+  }
+  return { draw, clear, describeDetection, setWalkingMaskEnabled };
 })();
