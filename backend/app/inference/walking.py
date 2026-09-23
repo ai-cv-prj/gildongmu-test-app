@@ -142,7 +142,7 @@ class WalkingPipeline:
                       "render":{"font_path":font_path,"font_size_width_divisor":27,"warning_position":"top_left"},
                       "mask_processor":self.segmenter.processor.to_dict(),
                       "device":self.device,"yolo_precision":"fp32",
-                      "source_revision":"ba9281b498537962a9c401d6e10f12c869cda433"}
+                      "source_revision":"81c4d640c3b673e487d86a1dabdf1d8b03c54572"}
             import importlib.metadata
             snapshot["package_versions"]={name:importlib.metadata.version(name) for name in
                 ("torch","ultralytics","transformers","numpy","scipy","lap","Pillow","imageio-ffmpeg")}
@@ -157,7 +157,7 @@ class WalkingPipeline:
             from .risk.risk import RiskEngine
             from .walking_clock import FrameClock
             self.sessions[session_id]={"engine":RiskEngine(self.risk_config,self.tracking_config),
-                "clock":FrameClock(self.risk_config["reset_gap_s"]),"last_frame":0,"count":0}
+                "clock":FrameClock(self.risk_config["reset_gap_s"], self.risk_config["hard_reset_gap_s"]),"last_frame":0,"count":0}
 
     def close_session(self, session_id: str) -> None:
         self.sessions.pop(session_id,None)

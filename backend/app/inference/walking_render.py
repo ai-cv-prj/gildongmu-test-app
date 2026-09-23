@@ -48,12 +48,13 @@ def render_frame(frame, record, class_map=None, font_path=""):
     prediction, settings = record["prediction"], record["settings"]
     result = overlay_segmentation(frame,class_map,settings["label_ids"],settings.get("overlay_alpha",.55))
     config = settings["risk_config"]
-    if not config.get("review_overlay",False):
+    view_unavailable=(prediction.get("camera_view") or {}).get("status")=="unavailable"
+    if not config.get("review_overlay",False) and not view_unavailable:
         result = draw_detections(result,prediction["detections"])
     result = draw_risk(result,prediction,config)
     # The integration renderer draws the main corridor; retain all extra candidates.
     roi = prediction.get("roi") or {}
-    for polygon in roi.get("corridor_polygons",[])[1:]:
+    for polygon in ([] if view_unavailable else roi.get("corridor_polygons",[])[1:]):
         points = np.rint(np.asarray(polygon)*[frame.shape[1]-1,frame.shape[0]-1]).astype(np.int32)
         cv2.polylines(result,[points],True,(255,220,20),2,cv2.LINE_AA)
     return warning_overlay(result,prediction.get("warning_text",""),prediction.get("level","monitor"),font_path)

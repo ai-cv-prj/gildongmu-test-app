@@ -18,66 +18,85 @@ VEHICLE_CLASSES = {"car", "bus", "truck", "motorcycle"}
 # 위험 객체의 음성 안내 범주 선택
 def danger_voice_target(prediction):
     """
-    대표 빨강 경고를 사람·차량·장애물 중 하나로 묶어 음성 안내 정보를 반환한다.
+    화면 문구가 가리키는 그 위험을 사람·차량·장애물 중 하나로 묶어 음성 안내 정보를 반환한다.
+    엔진이 고른 대표 경고를 그대로 따르므로 음성과 화면이 서로 다른 대상을 가리키지 않는다.
+    클래스가 안정적으로 확인되기 전에는 화면과 같이 장애물로 안내한다.
     """
-    candidates=[]
-    for item in prediction["detections"]:
-        level=item.get("alert_level",item.get("risk_level"))
-        if level != "danger" or not item.get("warning_primary",True):
-            continue
-        event_id=item.get("event_id")
-        if not isinstance(event_id,int) or isinstance(event_id,bool):
-            event_id=item.get("track_id")
-        if not isinstance(event_id,int) or isinstance(event_id,bool):
-            event_id=item.get("detection_index")
-        if not isinstance(event_id,int) or isinstance(event_id,bool):
-            continue
-        name=item["class_name"]
-        category="person" if name=="person" else "vehicle" if name in VEHICLE_CLASSES else "obstacle"
-        detection_index=item.get("detection_index")
-        order=detection_index if isinstance(detection_index,int) and not isinstance(detection_index,bool) else 10**9
-        candidates.append((event_id,order,category))
-    if not candidates:
+    selected=prediction.get("warning") or {}
+    if selected.get("level") != "danger":
         return None
-    event_id,_,category=min(candidates)
+    index=selected.get("detection_index")
+    if not isinstance(index,int) or isinstance(index,bool):
+        # 촬영 불가 안내처럼 대상 객체가 없는 위험은 음성으로 내보내지 않는다.
+        return None
+    item=next((d for d in prediction.get("detections",[])
+               if d.get("detection_index")==index),None)
+    if item is None or item.get("alert_level",item.get("risk_level")) != "danger":
+        return None
+    event_id=item.get("event_id")
+    if not isinstance(event_id,int) or isinstance(event_id,bool):
+        event_id=item.get("track_id")
+    if not isinstance(event_id,int) or isinstance(event_id,bool):
+        event_id=index
+    name=item.get("display_label") if item.get("label_status")=="reliable" else "obstacle"
+    category="person" if name=="person" else "vehicle" if name in VEHICLE_CLASSES else "obstacle"
     return {"category":category,"event_id":event_id}
 
 def warning_summary(prediction):
-    candidates = []
-    for item in prediction["detections"]:
-        level = item.get("alert_level", item.get("risk_level"))
-        if level not in ("caution", "danger") or not item.get("warning_primary", True):
-            continue
-        reasons = item.get("reasons", [])
-        direction = DIRECTIONS.get((item.get("geometry") or {}).get("side_direction"), "") if "side_close_candidate" in reasons else ""
-        label = NAMES.get(item["class_name"], "장애물")
-        if item.get("alert_status") == "held":
-            detail = "이전 경고 유지 · 관측 불확실"
-        elif "lateral_entry" in reasons or "relative_path_entry" in reasons:
-            detail = f"{label} 경로 진입 주의"
-        elif any(r in reasons for r in ("side_close_candidate","static_near_contact","near_path_occupied","large_static_candidate")):
-            detail = f"{direction} {label} 근접".strip()
-        elif "short_ttc" in reasons or "approaching" in reasons:
-            detail = f"{label} 접근 주의"
-        else:
-            detail = f"{label} 진행 경로 확인"
-        candidates.append((level, item.get("event_id", 0), detail))
-    surface = prediction.get("surface") or {}
-    if surface.get("alert_level"):
-        candidates.append(("caution", 10**9, "진행 경로 확인" + (" · 관측 불확실" if surface.get("status")=="uncertain" else "")))
-    for a in prediction.get("advisories", []):
-        candidates.append(("caution", a.get("event_id", 0), f"{DIRECTIONS.get(a.get('direction'), '')} 근접 물체 시야 이탈".strip()))
-    if not candidates:
+    selected = prediction.get("warning") or {}
+    level = selected.get("level", "monitor")
+    if level not in ("caution", "danger"):
         return "monitor", ""
-    level, _, message = min(candidates, key=lambda x: (-LEVELS[x[0]], x[1], x[2]))
-    return level, f"{'위험' if level == 'danger' else '주의'} · {message}"
+    source = selected.get("source")
+    if source == "camera_view":
+        camera_view = prediction.get("camera_view") or {}
+        if "previous_hazard_unverified" in (selected.get("reasons") or []):
+            detail = "이전 위험 확인 불가 · 카메라를 전방으로 들어 주세요"
+        elif camera_view.get("status") == "unavailable":
+            detail = "촬영 불가 · 카메라를 전방으로 들어 주세요"
+        else:
+            detail = "카메라 흔들림 · 화면을 안정적으로 촬영해 주세요"
+    elif source == "surface":
+        surface = prediction.get("surface") or {}
+        detail = ("진행 경로 확인 · 관측 불확실" if surface.get("status") == "uncertain"
+                  else "진행 경로의 비보행 영역 확인")
+    elif source == "advisory":
+        hazard_id = selected.get("hazard_id")
+        advisory = next((a for a in prediction.get("advisories", [])
+                         if f"advisory:{a.get('event_id')}" == hazard_id), {})
+        direction = DIRECTIONS.get(advisory.get("direction"), "")
+        detail = f"{direction} 근접 물체 시야 이탈".strip()
+    else:
+        index = selected.get("detection_index")
+        item = next((d for d in prediction.get("detections", [])
+                     if d.get("detection_index") == index), {})
+        reasons = set(item.get("reasons") or selected.get("reasons") or [])
+        if source == "surface_object" or item.get("semantic_path_overlap"):
+            detail = "진행 경로의 비보행 영역 확인"
+        else:
+            label = (NAMES.get(item.get("display_label"), "장애물")
+                     if item.get("label_status") == "reliable" else "장애물")
+            direction = (DIRECTIONS.get((item.get("geometry") or {}).get("side_direction"), "")
+                         if "side_close_candidate" in reasons else "")
+            if item.get("alert_status") == "held":
+                detail = "이전 경고 유지 · 관측 불확실"
+            elif "lateral_entry" in reasons or "relative_path_entry" in reasons:
+                detail = f"{label} 경로 진입 주의"
+            elif reasons.intersection(("side_close_candidate", "static_near_contact",
+                                       "near_path_occupied", "large_static_candidate")):
+                detail = f"{direction} {label} 근접".strip()
+            elif "short_ttc" in reasons or "approaching" in reasons:
+                detail = f"{label} 접근 주의"
+            else:
+                detail = f"{label} 진행 경로 확인"
+    return level, f"{'위험' if level == 'danger' else '주의'} · {detail}"
 
 def make_response(prediction, shape, class_map, label_ids, metadata):
     h,w=shape[:2]
     detections=[]
     for item in prediction["detections"]:
         g,m,p=item.get("geometry") or {},item.get("motion") or {},item.get("proximity") or {}
-        extra={key:item.get(key) for key in ("risk_level","alert_level","alert_status","assessment_quality","reasons","hold_reason","release_reason","event_id","warning_group_id","warning_group_size","warning_primary","sidewalk")}
+        extra={key:item.get(key) for key in ("risk_level","untrusted_risk_level","alert_level","alert_status","assessment_quality","reasons","hold_reason","release_reason","event_id","warning_group_id","warning_group_size","warning_primary","sidewalk","display_label","label_status","hazard_id","semantic_path_overlap")}
         extra.update(band=p.get("band"),in_path=max(g.get("corridor_overlap",0),g.get("immediate_overlap",0))>=metadata["risk_config"]["overlap_threshold"],
                      ttc_s=m.get("ttc_scale_s"),approach_state=m.get("approach_state"),motion_quality=m.get("quality"),
                      ttc_invalid_reason=m.get("ttc_invalid_reason"),time_to_corridor_s=m.get("time_to_corridor_s"),
@@ -89,11 +108,14 @@ def make_response(prediction, shape, class_map, label_ids, metadata):
     for d in prediction["detections"]:
         lev=d.get("alert_level",d.get("risk_level"))
         if lev in counts and (lev=="monitor" or d.get("warning_primary",True)):counts[lev]+=1
-    counts["surface"]=int(bool(prediction["surface"].get("alert_level")))
+    counts["surface"]=int(bool(prediction["surface"].get("alert_level")) and not prediction["surface"].get("suppressed_duplicate"))
     counts["advisories"]=len(prediction["advisories"])
     counts["tracked"]=sum(d["track_id"] is not None for d in detections)
-    event={key:prediction.get(key) for key in ("roi","surface","advisories","warning_groups","timestamp_s","timestamp_valid",
-             "state_epoch","state_reset","tracker_status","camera_motion_stable","reset_reason","timestamp_source","frame_gap_s")}
+    counts["camera_view"]=int((prediction.get("camera_view") or {}).get("status") in ("uncertain","unavailable"))
+    event={key:prediction.get(key) for key in ("roi","surface","advisories","warning_groups","motion_gap","timestamp_s","timestamp_valid",
+             "state_epoch","state_reset","tracker_status","camera_motion_stable","camera_view","view_recovered",
+             "reset_reason","timestamp_source","frame_gap_s")}
+    event["selected_warning"] = prediction.get("warning")
     voice=danger_voice_target(prediction)
     event.update(type="walking_warning",risk_schema_version=1,warning=bool(message),warning_text=message,level=level,
                  voice_category=voice["category"] if voice else None,

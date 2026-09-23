@@ -11,8 +11,11 @@ class ClockReading:
     reset_reason: str | None
 
 class FrameClock:
-    def __init__(self, reset_gap_s):
+    def __init__(self, reset_gap_s, hard_reset_gap_s=None):
         self.reset_gap_s = reset_gap_s
+        self.hard_reset_gap_s = reset_gap_s if hard_reset_gap_s is None else hard_reset_gap_s
+        if self.hard_reset_gap_s < reset_gap_s:
+            raise ValueError("hard_reset_gap_s must be at least reset_gap_s")
         self.previous_ms = None
         self.elapsed = 0.0
         self.arrival = None
@@ -34,5 +37,6 @@ class FrameClock:
             self.elapsed += fallback
             return ClockReading(self.elapsed, False, delta, "timestamp_not_increasing")
         self.elapsed += delta if delta is not None else fallback
-        gap = delta is not None and delta > self.reset_gap_s
-        return ClockReading(self.elapsed, not gap, delta, "capture_gap" if gap else None)
+        motion_gap = delta is not None and delta > self.reset_gap_s
+        hard_gap = delta is not None and delta > self.hard_reset_gap_s
+        return ClockReading(self.elapsed, not motion_gap, delta, "capture_gap" if hard_gap else None)
