@@ -97,7 +97,16 @@ def main() -> None:
                 print(f"[건너뜀] 프레임을 읽을 수 없습니다: {frame_path}")
                 missing += 1
                 continue
-            annotated = render(frame, result)
+            if (result.get("event") or {}).get("risk_schema_version") or (session / "inputs" / f"{frame_id:08d}.json").exists():
+                import sys
+                sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+                from backend.app.inference.walking_render import render_frame
+                record_path = session / "risk" / f"{frame_id:08d}.json"
+                record = json.loads(record_path.read_text()) if record_path.exists() else {"error": "missing risk record"}
+                mask = cv2.imread(str(session / record["mask_path"]), cv2.IMREAD_UNCHANGED) if record.get("mask_path") else None
+                annotated = render_frame(frame, record, mask)
+            else:
+                annotated = render(frame, result)
             output = output_dir / frame_path.name
             if not cv2.imwrite(str(output), annotated):
                 raise OSError(f"사진을 저장할 수 없습니다: {output}")

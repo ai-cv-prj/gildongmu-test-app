@@ -39,6 +39,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     service.stop(service.active_session_id)
                 except Exception:  # noqa: BLE001
                     logging.getLogger(__name__).exception("stop on shutdown failed")
+            service.shutdown()
 
     app = FastAPI(title="Gildongmu Test App", version=APP_VERSION, lifespan=lifespan)
     app.state.settings = settings

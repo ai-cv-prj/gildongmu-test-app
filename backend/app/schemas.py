@@ -98,6 +98,8 @@ class FrameResponse(BaseModel):
 
 
 class SessionSummary(BaseModel):
+    raw_frame_count: int = 0
+    export: Optional[dict[str, Any]] = None
     id: str
     mode: Mode
     model_id: str
