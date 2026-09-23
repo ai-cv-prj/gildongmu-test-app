@@ -27,4 +27,5 @@ workbench/
 .agents/
 .claude/
 AGENTS.md
+CLAUDE.md
 .vscode/
