@@ -57,7 +57,8 @@ def validate(result: object, mode: str) -> list[str]:
     try:
         import json
 
-        json.dumps(result)
+        # 밑줄로 시작하는 키는 앱 내부 전달용이라 응답에 담기지 않는다(보행 위험의 마스크 등)
+        json.dumps({key: value for key, value in result.items() if not key.startswith("_")})
     except TypeError as exc:
         errs.append(f"JSON 으로 저장할 수 없는 값이 있습니다 (numpy/tensor 는 float(), int() 로 변환): {exc}")
     return errs
