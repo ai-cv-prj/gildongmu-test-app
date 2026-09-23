@@ -94,7 +94,7 @@ def main() -> int:
     ap.add_argument("--mode", choices=list(EVENT_TYPES))
     ap.add_argument("--image", type=Path)
     ap.add_argument("--model", help="모델 ID. 생략하면 해당 기능의 첫 번째 실제 가중치 (없으면 mock)")
-    ap.add_argument("--conf", type=float, default=0.4)
+    ap.add_argument("--conf", type=float, default=None)
     ap.add_argument("--list", action="store_true", help="인식된 모델 목록만 출력")
     args = ap.parse_args()
 
@@ -128,12 +128,13 @@ def main() -> int:
         return 1
     print(f"[통과] load()  {1000 * (time.perf_counter() - t):.0f} ms")
 
+    confidence = args.conf if args.conf is not None else (0.25 if args.mode == "walking" else 0.4)
     pipe.reset_session("check")
     times, result = [], None
     for i in range(1, 6):
         t = time.perf_counter()
         try:
-            result = pipe.infer(frame, InferenceContext(session_id="check", frame_id=i, captured_at_ms=0, confidence=args.conf))
+            result = pipe.infer(frame, InferenceContext(session_id="check", frame_id=i, captured_at_ms=int(time.monotonic()*1000) if args.mode == "walking" else 0, confidence=confidence))
         except Exception as exc:  # noqa: BLE001
             print(f"[실패] infer(): {type(exc).__name__}: {exc}")
             return 1
@@ -147,14 +148,22 @@ def main() -> int:
         for e in errs:
             print("   -", e)
         return 1
-    print(f"[통과] 반환 형식  검출 {len(result['detections'])}개, event={result['event']}")
+    event_summary = ({k:v for k,v in result["event"].items() if k not in ("mask_png","settings_snapshot")}
+                     if args.mode == "walking" else result["event"])
+    print(f"[통과] 반환 형식  검출 {len(result['detections'])}개, event={event_summary}")
     for d in result["detections"]:
         print(f"   - {d['class_name']} {d['confidence']:.2f} {d['box']}")
 
     out_dir = ROOT / "check_output"
     out_dir.mkdir(exist_ok=True)
     out = out_dir / f"{args.mode}_{args.image.stem}.jpg"
-    cv2.imwrite(str(out), draw(frame, result))
+    if "_walking_record" in result:
+        from backend.app.inference.walking_render import render_frame
+        record = result["_walking_record"]
+        shown = render_frame(frame, record, record["class_map"])
+    else:
+        shown = draw(frame, result)
+    cv2.imwrite(str(out), shown)
     print(f"박스를 그린 이미지: {out}")
     return 0
 

@@ -27,7 +27,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         storage = SessionStorage(settings.sessions_dir, settings.save_frames)
-        registry = PipelineRegistry(settings.model_dir)
+        registry = PipelineRegistry(settings.model_dir, settings)
         service = SessionService(settings, storage, registry)
         service.recover_on_startup()
         app.state.service = service

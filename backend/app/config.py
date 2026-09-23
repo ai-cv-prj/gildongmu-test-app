@@ -35,6 +35,13 @@ class Settings:
     max_upload_bytes: int = field(default_factory=lambda: int(os.getenv("MAX_UPLOAD_BYTES", str(2 * 1024 * 1024))))
     min_free_disk_gb: float = field(default_factory=lambda: float(os.getenv("MIN_FREE_DISK_GB", "2")))
 
+    walking_risk_enabled: bool = field(default_factory=lambda: _env_bool("WALKING_RISK_ENABLED", True))
+    walking_risk_config: Path = field(default_factory=lambda: _resolve(os.getenv("WALKING_RISK_CONFIG", "backend/config/walking_risk.yaml")))
+    walking_mask_weights: Path = field(default_factory=lambda: _resolve(os.getenv("WALKING_MASK_WEIGHTS", "backend/models/walking_aux/mask2former")))
+    walking_precision: str = field(default_factory=lambda: os.getenv("WALKING_PRECISION", "fp32"))
+    walking_font_path: str = field(default_factory=lambda: os.getenv("WALKING_FONT_PATH", ""))
+    walking_export_enabled: bool = True
+
     @property
     def sessions_dir(self) -> Path:
         return self.data_dir / "sessions"

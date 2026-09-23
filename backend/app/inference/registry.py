@@ -47,8 +47,9 @@ def file_sha256(path: Path) -> str:
 
 
 class PipelineRegistry:
-    def __init__(self, model_dir: Path) -> None:
+    def __init__(self, model_dir: Path, settings=None) -> None:
         self.model_dir = model_dir
+        self.settings = settings
         self._mock_specs = {m: MockPipeline(m).spec for m in MODES}
         self._loaded: dict[str, InferencePipeline] = {}
         self._lock = threading.Lock()
@@ -56,7 +57,7 @@ class PipelineRegistry:
 
     # ---- 목록: 호출할 때마다 폴더를 다시 읽으므로 가중치를 넣고 새로고침하면 바로 보인다 ----
     def _real_specs(self, mode: str) -> list[ModelSpec]:
-        """기존 가중치 파일과 walking의 로컬 Mask2Former 모델 폴더를 등록한다."""
+        """모드별 주 모델을 등록한다. walking_aux는 독립 선택 모델이 아니다."""
         folder = self.model_dir / mode
         files = sorted(p for p in folder.glob("*") if p.is_file() and p.suffix.lower() in WEIGHT_EXTS) if folder.exists() else []
         specs = [
@@ -66,17 +67,9 @@ class PipelineRegistry:
             for p in files
         ]
         if mode == "walking":
-            for weights in sorted(folder.glob("*/model.safetensors")):
-                model_folder = weights.parent
-                if not weights.is_file() or not all(
-                    (model_folder / name).is_file() for name in ("config.json", "preprocessor_config.json")
-                ):
-                    continue
-                specs.append(ModelSpec(
-                    id=f"walking-{_slug(model_folder.name)}-safetensors", mode=mode,
-                    name=f"보행가능·횡단보도 · {model_folder.name}", version=model_folder.name, weights=weights,
-                    note=f"backend/models/walking/{model_folder.name}/ · 보행가능(초록) / 횡단보도(핑크) / 보행불가능(투명)",
-                ))
+            for spec in specs:
+                spec.note += " · YOLO + 보도 ROI · 위험 판단"
+
         return specs or [ModelSpec(
             id=f"{mode}-none", mode=mode, name=f"{MODE_KO[mode]} 실제 모델", version="-", weights=None,
             note=f"backend/models/{mode}/ 에 가중치 파일을 넣어주세요",
@@ -101,7 +94,9 @@ class PipelineRegistry:
                 raise PipelineLoadError(f"unknown model_id: {model_id}")
             if not spec.available:
                 raise PipelineLoadError(f"가중치 파일이 없습니다: {spec.note}")
-            pipeline = MockPipeline(spec.mode) if spec.is_mock else REAL_PIPELINES[spec.mode](spec)
+            pipeline = (MockPipeline(spec.mode) if spec.is_mock else
+                        WalkingPipeline(spec, self.settings) if spec.mode == "walking" else
+                        REAL_PIPELINES[spec.mode](spec))
             try:
                 log.info("loading pipeline %s", model_id)
                 pipeline.load()
