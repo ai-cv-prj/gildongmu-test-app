@@ -10,8 +10,12 @@
     ["신호를 확인할 수 없습니다.", "missing"],
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
+  CLIPS.set("장애물 안내를 시작합니다.", "walking-startup");
+  CLIPS.set("위험! 사람이 있음.", "danger-person");
+  CLIPS.set("위험! 차량이 있음.", "danger-vehicle");
+  CLIPS.set("위험! 장애물이 있음.", "danger-obstacle");
   CLIPS.set("음성 확인입니다. 이 문장이 들리면 신호 안내를 사용할 수 있습니다.", "sound-check");
-  const source = name => `/static/audio/ko-v1/${name}.mp3`;
+  const source = name => `/static/audio/ko-v1/${name}.mp3${name.startsWith("danger-") ? "?v=walking-audio-v2" : ""}`;
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {
     // 클릭으로 시작한 재생기를 이후 신호 안내에도 재사용한다.
@@ -105,7 +109,10 @@
       timer = setTimeout(() => fail("음성 재생이 지연되어 안내를 중단했습니다. 연결 상태를 확인하고 다시 시작해 주세요."),
         Math.max(0, validUntil - now()));
       try {
-        audio.src = source(CLIPS.get(request.text));
+        const clip = CLIPS.get(request.text);
+        // 위험 장애물은 짧고 빠르게 전달하고 기존 신호등 안내 속도는 유지한다.
+        audio.playbackRate = clip.startsWith("danger-") ? 5 : 1;
+        audio.src = source(clip);
         audio.load();
         // await 없이 클릭 처리 중 호출해야 모바일의 사용자 동작으로 인정된다.
         const playing = audio.play();

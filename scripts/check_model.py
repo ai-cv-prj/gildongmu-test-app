@@ -57,7 +57,8 @@ def validate(result: object, mode: str) -> list[str]:
     try:
         import json
 
-        json.dumps(result)
+        # 밑줄로 시작하는 키는 앱 내부 전달용이라 응답에 담기지 않는다(보행 위험의 마스크 등)
+        json.dumps({key: value for key, value in result.items() if not key.startswith("_")})
     except TypeError as exc:
         errs.append(f"JSON 으로 저장할 수 없는 값이 있습니다 (numpy/tensor 는 float(), int() 로 변환): {exc}")
     return errs
@@ -115,7 +116,7 @@ def main() -> int:
         return 0
     if not args.mode or not args.image:
         ap.error("--mode 와 --image 가 필요합니다")
-    confidence = args.conf if args.conf is not None else (0.25 if args.mode == "traffic" else 0.4)
+    confidence = args.conf if args.conf is not None else (0.25 if args.mode in ("traffic", "walking") else 0.4)
 
     frame = cv2.imread(str(args.image))
     if frame is None:
@@ -144,7 +145,11 @@ def main() -> int:
     for i in range(1, 6):
         t = time.perf_counter()
         try:
-            result = pipe.infer(frame, InferenceContext(session_id="check", frame_id=i, captured_at_ms=0, confidence=confidence))
+            result = pipe.infer(frame, InferenceContext(
+                session_id="check", frame_id=i,
+                # 보행 위험 판단은 시간 간격을 쓰므로 단조 증가 시각을 준다
+                captured_at_ms=int(time.monotonic() * 1000) if args.mode == "walking" else 0,
+                confidence=confidence))
         except Exception as exc:  # noqa: BLE001
             print(f"[실패] infer(): {type(exc).__name__}: {exc}")
             return 1
@@ -158,14 +163,22 @@ def main() -> int:
         for e in errs:
             print("   -", e)
         return 1
-    print(f"[통과] 반환 형식  검출 {len(result['detections'])}개, event={result['event']}")
+    event_summary = ({k:v for k,v in result["event"].items() if k not in ("mask_png","mask_rle","settings_snapshot")}
+                     if args.mode == "walking" else result["event"])
+    print(f"[통과] 반환 형식  검출 {len(result['detections'])}개, event={event_summary}")
     for d in result["detections"]:
         print(f"   - {d['class_name']} {d['confidence']:.2f} {d['box']}")
 
     out_dir = ROOT / "check_output"
     out_dir.mkdir(exist_ok=True)
     out = out_dir / f"{args.mode}_{args.image.stem}.jpg"
-    cv2.imwrite(str(out), draw(frame, result))
+    if "_walking_record" in result:
+        from backend.app.inference.walking_render import render_frame
+        record = result["_walking_record"]
+        shown = render_frame(frame, record, record["class_map"])
+    else:
+        shown = draw(frame, result)
+    cv2.imwrite(str(out), shown)
     print(f"박스를 그린 이미지: {out}")
     return 0
 

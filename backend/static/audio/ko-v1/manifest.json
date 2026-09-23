@@ -17,6 +17,10 @@
     "green-initial-wait.mp3": "초록불입니다. 다음 초록 신호를 기다려 주세요.",
     "mock-green-initial-wait.mp3": "모의 신호. 초록불입니다. 다음 초록 신호를 기다려 주세요.",
     "green.mp3": "초록불입니다.",
-    "mock-green.mp3": "모의 신호. 초록불입니다."
+    "mock-green.mp3": "모의 신호. 초록불입니다.",
+    "walking-startup.mp3": "장애물 안내를 시작합니다.",
+    "danger-person.mp3": "위험! 사람이 있음.",
+    "danger-vehicle.mp3": "위험! 차량이 있음.",
+    "danger-obstacle.mp3": "위험! 장애물이 있음."
   }
 }

@@ -1,0 +1,126 @@
+# Integration risk/tracking rules, plus explicit walking detector options.
+yolo:
+  conf: 0.25
+  imgsz: 640
+  head: nms
+  iou: 0.7
+  max_det: 300
+  rect: true
+risk:
+  enabled: true
+  corridor_polygon:
+  - - 0.40
+    - 0.30
+  - - 0.60
+    - 0.30
+  - - 0.98
+    - 1.0
+  - - 0.02
+    - 1.0
+  immediate_polygon:
+  - - 0.205
+    - 0.75
+  - - 0.795
+    - 0.75
+  - - 0.98
+    - 1.0
+  - - 0.02
+    - 1.0
+  footprint_height_ratio: 0.15
+  footprint_max_height: 0.02
+  exit_overlap_threshold: 0.1
+  exit_margin: 0.02
+  static_caution_y: 0.65
+  static_danger_y: 0.88
+  static_ground_classes:
+  - pole
+  - bollard
+  - tree_trunk
+  - potted_plant
+  - fire_hydrant
+  - utility_box
+  - parking_meter
+  - kiosk
+  - bench
+  - barricade
+  - trash_bin
+  sidewalk_roi_enabled: true
+  roi_max_shift: 0.15
+  roi_fit_residual: 0.04
+  roi_confirm_s: 0.2
+  roi_smooth_s: 0.3
+  roi_max_shift_per_s: 0.12
+  roi_hold_s: 0.5
+  roi_return_s: 0.5
+  clear_confirm_s: 0.5
+  uncertainty_hold_s: 0.8
+  id_bridge_s: 0.3
+  id_bridge_iou: 0.5
+  overlap_threshold: 0.2
+  edge_margin_ratio: 0.08
+  history_window_s: 0.6
+  min_history_s: 0.2
+  prediction_horizon_s: 0.8
+  min_lateral_speed: 0.05
+  lateral_near_y: 0.42
+  reset_gap_s: 0.5
+  ttc_alerts: true
+  ttc_danger_s: 1.5
+  ttc_caution_s: 3.0
+  min_expansion_rate: 0.05
+  max_motion_residual: 0.03
+  camera_max_rotation_deg: 4.0
+  camera_max_translation: 0.12
+  camera_max_scale_change: 0.1
+  release_hold_s: 0.5
+  repeat_cooldown_s: 2.0
+  event_match_iou: 0.3
+  draw_roi: true
+  # 큰 검토용 오버레이(채운 ROI·카드 라벨·하단 요약 패널)로 표시한다. false면 간략 표시.
+  review_overlay: true
+  log_jsonl: true
+  # Shared image profile: no individual body dimensions, depth or ground-height model.
+  side_proximity_enabled: true
+  side_near_y: 0.50
+  side_min_height: 0.18
+  side_min_width: 0.12
+  full_static_footprint: true
+  relative_entry_enabled: true
+  roi_recalibration_enabled: true
+  roi_ground_adapt_enabled: true
+  roi_jitter_shift: 0.03
+  roi_large_shift: 0.08
+  roi_change_confirm_s: 0.30
+  roi_small_confirm_s: 0.50
+  roi_candidate_spread: 0.03
+  surface_risk_enabled: true
+  surface_confirm_s: 0.20
+  surface_clear_s: 0.50
+  surface_min_area: 0.003
+  surface_band_fraction: 0.12
+  surface_unstable_change: 0.18
+  class_bridge_enabled: true
+  visibility_advisory_s: 1.0
+  # Keep all detections; combine only strongly overlapping warning labels/counts.
+  warning_grouping_enabled: true
+  warning_group_iou: 0.65
+  warning_group_containment: 0.85
+  warning_group_max_area_ratio: 1.60
+  # 장애물 주변이 모두 보행불가이면 위험을 주의로 완화한다.
+  walkable_surroundings_filter_enabled: true
+  surrounding_side_width_ratio: 0.15
+  surrounding_side_height_ratio: 0.40
+  surrounding_bottom_height_ratio: 0.10
+  surrounding_max_side_width_ratio: 0.02
+  surrounding_max_bottom_height_ratio: 0.02
+  surrounding_min_region_pixels: 4
+  surrounding_walkable_threshold: 0.05
+tracking:
+  enabled: true
+  backend: botsort
+  track_high_thresh: 0.25
+  track_low_thresh: 0.1
+  new_track_thresh: 0.25
+  track_buffer: 30
+  match_thresh: 0.8
+  fuse_score: true

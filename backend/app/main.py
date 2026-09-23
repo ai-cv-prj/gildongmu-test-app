@@ -28,7 +28,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         storage = SessionStorage(settings.sessions_dir, settings.save_frames)
-        registry = PipelineRegistry(settings.model_dir)
+        registry = PipelineRegistry(settings.model_dir, settings)
         service = SessionService(settings, storage, registry)
         service.recover_on_startup()
         app.state.service = service
@@ -41,6 +41,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     service.stop(service.active_session_id)
                 except Exception:  # noqa: BLE001
                     logging.getLogger(__name__).exception("stop on shutdown failed")
+            service.shutdown()
 
     app = FastAPI(title="Gildongmu Test App", version=APP_VERSION, lifespan=lifespan)
     app.state.settings = settings

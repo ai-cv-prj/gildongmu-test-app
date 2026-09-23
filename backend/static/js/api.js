@@ -121,6 +121,9 @@ window.GApi = (() => {
     health: () => request("/health", {}, 4000),
     models: () => request("/models"),
     createSession: (body) => request("/sessions", json(body), 15000),
+    getSession: (id) => request(`/sessions/${encodeURIComponent(id)}`),
+    retryExport: (id) => request(`/sessions/${encodeURIComponent(id)}/export`, { method: "POST" }),
+    resultVideoUrl: (id) => `${BASE}/sessions/${encodeURIComponent(id)}/result-video`,
     stopSession: (id) => request(`/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" }, 10000),
     uploadFrame(id, blob, frameId, capturedAtMs, timeoutMs) {
       const fd = new FormData();

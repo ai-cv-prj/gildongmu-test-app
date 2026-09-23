@@ -131,6 +131,8 @@ https://random-words-here.trycloudflare.com
 
 박스 색상·결과 필드, 선택·추적·색상 분류 로직과 설정값, 검증 결과·한계는 [신호등 모듈 문서](docs/traffic-signal.md)를 참고하세요.
 
+도보 장애물 모드의 위험 판단 기준과 설정값, 세션 저장 파일과 결과 영상은 [도보 위험 판단 문서](docs/walking-risk.md)를 참고하세요.
+
 ### 화면에 나오는 숫자
 
 | 항목 | 의미 |
@@ -545,6 +547,7 @@ scripts/                             run.sh, tunnel.sh, check_model.py, screensh
 tests/                              API·마스크·캡처·녹화·지연 로그 테스트
 tests/test_traffic_*.py              신호등 기본값·방향·흔들림·선택 회귀 테스트
 docs/traffic-signal.md               신호등 동작·검증 결과·한계
+docs/walking-risk.md                 도보 위험 판단 실행·설정·저장물
 ```
 
 ### 테스트

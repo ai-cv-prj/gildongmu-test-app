@@ -61,6 +61,7 @@ class ActiveSession:
     confidence: float
     pipeline: InferencePipeline
     manifest: dict[str, Any]
+    walking_last_frame: int = 0
     frame_count: int = 0
     error_count: int = 0
     inference_ms: list[float] = field(default_factory=list)
@@ -76,6 +77,8 @@ class SessionService:
         self.registry = registry
         self._active: Optional[ActiveSession] = None
         self._lock = threading.Lock()
+        self._walking_exporter = None
+        self._export_lock = threading.Lock()
 
     @property
     def active_session_id(self) -> Optional[str]:
@@ -89,6 +92,8 @@ class SessionService:
             if not m or m.get("status") != "running":
                 continue
             ok, err = self.storage.count_results(sid)
+            if m.get("walking_risk"):
+                m["raw_frame_count"] = len(list((self.storage.session_dir(sid) / "frames").glob("*.jpg")))
             now = utc_now()
             m.update(
                 status="aborted", ended_at=iso(now), ended_at_local=local_iso(now),
@@ -102,6 +107,11 @@ class SessionService:
                 log.exception("cannot mark %s as aborted", sid)
         if n:
             log.warning("marked %d stale running session(s) as aborted", n)
+        if self.settings.walking_export_enabled:
+            for sid in self.storage.list_session_ids():
+                m = self.storage.read_manifest(sid) or {}
+                if m.get("walking_risk") and m.get("status") != "running":
+                    self._exporter().submit(self.storage.session_dir(sid))
         return n
 
     # ---- 시작 ----
@@ -124,6 +134,8 @@ class SessionService:
                 raise SessionError(500, "model_load_failed", str(exc)) from exc
             spec = pipeline.spec  # 로딩 후에는 가중치 해시가 채워져 있다
 
+            if getattr(pipeline, "risk_enabled", False) and "confidence" not in req.settings.model_fields_set:
+                req.settings.confidence = pipeline.yolo_config["conf"]
             started = utc_now()
             local = started.astimezone()  # 서버 PC 로컬 시각
             base = f"{local.strftime('%Y%m%d_%H%M%S')}_{slugify(req.device_type)}_{req.mode}"
@@ -156,6 +168,8 @@ class SessionService:
                 "settings": req.settings.model_dump(),
                 "client": req.client.model_dump(),
             }
+            if getattr(pipeline, "risk_enabled", False):
+                manifest.update(walking_risk=True, raw_frame_count=0, walking_settings=pipeline.metadata, export_status_file="export.json", frame_mapping_file="result_visualized.frames.json")
             try:
                 path = self.storage.create_session(session_id, manifest)
             except StorageError as exc:
@@ -184,6 +198,11 @@ class SessionService:
             raise SessionError(413, "image_too_large", f"이미지 크기 초과 ({len(image_bytes)} bytes)")
         if content_type not in {"image/jpeg", "image/jpg"}:
             raise SessionError(415, "unsupported_media_type", f"JPEG 만 허용합니다: {content_type}")
+
+        if getattr(active.pipeline, "risk_enabled", False):
+            from .walking_frames import process_walking_frame
+            return process_walking_frame(self, active, image_bytes, frame_id, captured_at_ms,
+                                         client_sent_at_ms, received, t0)
 
         with active.lock:
             arr = np.frombuffer(image_bytes, dtype=np.uint8)
@@ -274,7 +293,9 @@ class SessionService:
             with active.lock:
                 ended = utc_now()
                 try:
-                    video_status = "pending" if self.settings.save_frames and active.frame_count else "no_frames"
+                    # 보행 위험 세션은 촬영 간격을 보존하는 walking_export가 따로 만든다
+                    video_status = ("walking_export" if active.manifest.get("walking_risk")
+                                    else "pending" if self.settings.save_frames and active.frame_count else "no_frames")
                     self._flush_manifest(active, status="completed", ended_at=iso(ended),
                                          ended_at_local=local_iso(ended), video_status=video_status)
                 except StorageError as exc:
@@ -284,6 +305,8 @@ class SessionService:
                 except Exception:  # noqa: BLE001
                     log.exception("close_session failed")
                 self._active = None
+            if active.manifest.get("walking_risk") and self.settings.walking_export_enabled:
+                self._exporter().submit(self.storage.session_dir(session_id))
             log.info("session stopped %s frames=%d errors=%d", session_id, active.frame_count, active.error_count)
             return self.get(session_id), False
 
@@ -351,9 +374,34 @@ class SessionService:
             "last_error": m.get("last_error"),
             "video_status": "ready" if video_path else m.get("video_status"),
             "video_path": video_path,
+            "raw_frame_count": active.manifest.get("raw_frame_count", active.frame_count) if live else m.get("raw_frame_count", m.get("frame_count", 0)),
+            "export": self._export_status(session_id) if m.get("walking_risk") else None,
             "settings": m.get("settings", {}),
             "client": m.get("client", {}),
         }
+
+    def _exporter(self):
+        with self._export_lock:
+            if self._walking_exporter is None:
+                from .walking_export import WalkingExporter
+                self._walking_exporter = WalkingExporter(self.settings.walking_font_path)
+            return self._walking_exporter
+
+    def _export_status(self, session_id):
+        from .walking_export import read_status
+        return read_status(self.storage.session_dir(session_id))
+
+    def retry_export(self, session_id):
+        row = self.get(session_id)
+        manifest = self.storage.read_manifest(session_id)
+        if not manifest.get("walking_risk") or row["status"] == "running":
+            raise SessionError(409, "export_unavailable", "종료된 보행 위험 세션만 출력할 수 있습니다")
+        self._exporter().submit(self.storage.session_dir(session_id))
+        return self._export_status(session_id)
+
+    def shutdown(self):
+        if self._walking_exporter is not None:
+            self._walking_exporter.shutdown()
 
     def get(self, session_id: str) -> dict[str, Any]:
         if not re.fullmatch(r"[A-Za-z0-9._-]+", session_id or ""):

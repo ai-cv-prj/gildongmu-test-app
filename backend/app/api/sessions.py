@@ -155,7 +155,6 @@ def get_frame_image(session_id: str, frame_id: int, svc: SessionService = Depend
         raise SessionError(404, "frame_not_found", "프레임 이미지가 없습니다")
     return FileResponse(path, media_type="image/jpeg")
 
-
 @router.get("/sessions/{session_id}/video")
 def get_session_video(session_id: str, svc: SessionService = Depends(get_service)) -> FileResponse:
     row = svc.get(session_id)
@@ -165,3 +164,20 @@ def get_session_video(session_id: str, svc: SessionService = Depends(get_service
     if not path.is_file():
         raise SessionError(404, "video_not_found", "세션 영상 파일이 없습니다")
     return FileResponse(path, media_type="video/mp4", filename=f"{session_id}.mp4")
+
+
+# 보행 위험 세션은 촬영 간격을 보존한 별도 결과 영상을 만든다
+@router.post("/sessions/{session_id}/export")
+def retry_result_video(session_id: str, svc: SessionService = Depends(get_service)) -> dict:
+    return svc.retry_export(session_id)
+
+
+@router.get("/sessions/{session_id}/result-video")
+def get_result_video(session_id: str, svc: SessionService = Depends(get_service)) -> FileResponse:
+    row = svc.get(session_id)
+    if not row.get("export") or row["export"].get("state") != "ready":
+        raise SessionError(409, "export_not_ready", "결과 영상이 아직 준비되지 않았습니다")
+    path = svc.storage.session_dir(session_id) / "result_visualized.mp4"
+    if not path.is_file():
+        raise SessionError(404, "result_video_missing", "결과 영상 파일이 없습니다")
+    return FileResponse(path, media_type="video/mp4", filename=f"{session_id}_result_visualized.mp4")

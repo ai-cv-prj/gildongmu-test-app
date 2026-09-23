@@ -15,12 +15,14 @@
     ttsStatus: $("tts-status"), btnSoundCheck: $("btn-sound-check"),
     btnMute: $("btn-mute"),
     summary: $("summary"), sId: $("s-id"), sFrames: $("s-frames"), sAvg: $("s-avg"), sPath: $("s-path"),
-    alert: $("alert"),
+    alert: $("alert"), exportStatus: $("export-status"), maskToggle: $("walking-mask-toggle"),
   };
 
   // 기능별로 검증한 입력 크기와 전송 상한을 유지한다. 요청은 항상 하나씩 보낸다.
   const SETTINGS = { confidence: 0.4, image_max_side: 640, target_fps: 10, jpeg_quality: 0.8, timeout_ms: 5000, retry_wait_ms: 500 };
   const TRAFFIC_SETTINGS = { confidence: 0.25, image_max_side: 960, target_fps: 5 };
+  // 위험 판단 프로파일과 같은 검출 기준. 입력 크기·전송 상한은 공통값을 쓴다.
+  const WALKING_SETTINGS = { confidence: 0.25 };
   const MODE_LABEL = { traffic: "신호등", walking: "도보 장애물", bus: "버스" };
 
   const state = {
@@ -75,6 +77,10 @@
       }).join("")
       : `<span class="muted">검출 없음 · frame ${res.frame_id}</span>`;
     const ev = res.event || {};
+    if (ev.risk_schema_version) {
+      const c = ev.counts || {};
+      el.resultRow.textContent = `위험 ${c.danger || 0} · 주의 ${(c.caution || 0) + (c.surface || 0) + (c.advisories || 0)} · 관측 ${c.monitor || 0} · 추적 ${c.tracked || 0}`;
+    }
     if (ev.type === "walking_warning" && Number.isFinite(ev.walkable_ratio)) {
       const crosswalk = Number.isFinite(ev.crosswalk_ratio)
         ? ` · 횡단보도(핑크) ${(ev.crosswalk_ratio * 100).toFixed(1)}%` : "";
@@ -99,7 +105,7 @@
       const crosswalkText = GOverlay.describeCrosswalkEvent(ev);
       if (crosswalkText) text += ` / ${crosswalkText}`;
     } else if (ev.type === "walking_warning") {
-      if (ev.warning) { tone = "warn"; text = ev.warning_text || "장애물 주의"; }
+      if (ev.warning) { tone = ev.level === "danger" ? "red" : "warn"; text = ev.warning_text || "장애물 주의"; }
     } else if (ev.type === "bus_detection") {
       if (ev.bus_number) { tone = ev.is_target ? "green" : ""; text = `버스 ${ev.bus_number}${ev.is_target ? " · 목표 버스" : ""}`; }
     }
@@ -129,11 +135,13 @@
     try { localStorage.setItem("gildongmu.prefs", JSON.stringify({ mode: state.mode, device: currentDevice(), voiceEnabled: state.voiceEnabled })); } catch (_) { /* 설정 저장 실패는 무시 */ }
   }
   function idleVoiceText() {
-    return state.voiceEnabled ? "음성 안내가 켜져 있습니다. 테스트를 시작하면 신호를 읽습니다." : "음성 안내가 꺼져 있습니다.";
+    const action = state.mode === "walking" ? "위험 장애물을 안내합니다" : "신호를 읽습니다";
+    return state.voiceEnabled ? `음성 안내가 켜져 있습니다. 테스트를 시작하면 ${action}.` : "음성 안내가 꺼져 있습니다.";
   }
 
   function selectMode(mode, refill = true) {
     state.mode = mode;
+    el.maskToggle.hidden = mode !== "walking";
     [...el.modeSeg.querySelectorAll("button")].forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
     if (refill) fillModels();
   }
@@ -165,8 +173,8 @@
     const locked = state.running || !!state.sessionId;
     el.setup.hidden = locked;
     el.runInfo.hidden = !locked;
-    el.guidancePanel.hidden = state.mode !== "traffic";
-    el.btnMute.disabled = state.mode !== "traffic";
+    el.guidancePanel.hidden = !["traffic","walking"].includes(state.mode);
+    el.btnMute.disabled = !["traffic","walking"].includes(state.mode);
     el.btnMute.textContent = state.voiceEnabled ? "음성 끄기" : "음성 켜기";
   }
 
@@ -227,7 +235,8 @@
     showAlert(null);
     el.summary.hidden = true;
     el.btnStart.disabled = true;
-    const settings = { ...SETTINGS, ...(state.mode === "traffic" ? TRAFFIC_SETTINGS : {}) };
+    const settings = { ...SETTINGS, ...(state.mode === "traffic" ? TRAFFIC_SETTINGS
+      : state.mode === "walking" ? WALKING_SETTINGS : {}) };
     const body = {
       mode: state.mode,
       model_id: el.modelSelect.value,
@@ -235,12 +244,14 @@
       note: el.note.value.trim(),
       settings: { confidence: settings.confidence, image_max_side: settings.image_max_side,
         target_fps: settings.target_fps, jpeg_quality: settings.jpeg_quality },
-      client: { user_agent: navigator.userAgent, screen_width: screen.width, screen_height: screen.height, platform: navigator.platform || "", app_version: "traffic-audio-v13" },
+      client: { user_agent: navigator.userAgent, screen_width: screen.width, screen_height: screen.height, platform: navigator.platform || "", app_version: "walking-risk-v1" },
     };
     try {
       // 켜기로 선택된 경우 사용자 클릭 안에서 재생을 요청한다.
       const selectedModel = state.models.find(m => m.id === body.model_id);
-      if (state.mode === "traffic" && state.voiceEnabled) guidance.start(null, !!selectedModel?.is_mock);
+      if (["traffic","walking"].includes(state.mode) && state.voiceEnabled) {
+        guidance.start(null, !!selectedModel?.is_mock, state.mode);
+      }
       else guidance.stop();
       const r = await GApi.createSession(body);
       state.sessionId = r.session_id;
@@ -307,7 +318,12 @@
       const r = await GApi.stopSession(state.sessionId);
       const s = r.session;
       el.sId.textContent = s.id;
-      el.sFrames.textContent = `${s.frame_count}장 저장 · 실패 ${s.error_count}`;
+      el.sFrames.textContent = s.mode === "walking" && s.export
+        ? `원본 ${s.raw_frame_count}장 · 분석 성공 ${s.frame_count} · 실패 ${s.error_count}`
+        : `${s.frame_count}장 저장 · 실패 ${s.error_count}`;
+      document.querySelector(".summary-title").lastChild.textContent = s.export ? "원본 저장 · 결과 영상 생성 중" : "저장 완료";
+      el.exportStatus.hidden = !s.export;
+      if (s.export) watchExport(s.id);
       el.sAvg.textContent = `${fmt(s.average_inference_ms)} ms / ${fmt(s.average_server_ms)} ms (p95 ${fmt(s.p95_server_ms)} ms)`;
       el.sPath.textContent = s.storage_path;
       el.summary.hidden = false;
@@ -347,7 +363,10 @@
       if (paused) { paused = false; setBadge("running", "테스트 중"); showAlert(null); }
 
       const t0 = performance.now();
-      const capturedAt = Date.now(); // JPEG 생성 이전 시각으로 서버 로그와 연결한다.
+      // 보행 위험 판단은 프레임 간격으로 운동을 계산하므로 벽시계 대신 단조 증가 시각을 쓴다.
+      const capturedAt = state.mode === "walking"
+        ? Math.round(performance.timeOrigin + performance.now())
+        : Date.now(); // JPEG 생성 이전 시각으로 서버 로그와 연결한다.
       const frameId = ++state.frameId;
       const row = {
         frame_id: frameId, captured_at_ms: capturedAt, capture_started_ms: t0,
@@ -435,6 +454,42 @@
     if (!state.stopping) { GOverlay.clear(); void timings.finish(); }
   }
 
+  async function watchExport(id) {
+    if (el.sId.textContent !== id) return;
+    try {
+      const s = await GApi.getSession(id);
+      if (el.sId.textContent !== id) return;
+      const e = s.export || {};
+      el.exportStatus.replaceChildren();
+      const title = document.querySelector(".summary-title").lastChild;
+      if (e.state === "ready") {
+        title.textContent = "원본·결과 영상 저장 완료";
+        const link = document.createElement("a");
+        link.href = GApi.resultVideoUrl(id);
+        link.textContent = `결과 영상 다운로드 · 원본 ${e.frame_count}장`;
+        el.exportStatus.append(link);
+      } else if (e.state === "failed") {
+        title.textContent = "원본 저장 · 결과 영상 생성 실패";
+        el.exportStatus.append(document.createTextNode(e.error || "결과 영상 생성 실패"));
+        const retry = document.createElement("button");
+        retry.type = "button"; retry.textContent = "영상 생성 다시 시도";
+        retry.onclick = async () => {
+          retry.disabled = true;
+          try { await GApi.retryExport(id); watchExport(id); }
+          catch (err) { retry.disabled = false; showAlert(err.message); }
+        };
+        el.exportStatus.append(retry);
+      } else {
+        el.exportStatus.textContent = "결과 영상 생성 중…";
+        setTimeout(() => watchExport(id), 1500);
+      }
+    } catch (e) {
+      el.exportStatus.textContent = "결과 영상 상태 확인 중…";
+      setTimeout(() => watchExport(id), 3000);
+    }
+  }
+  el.maskToggle.querySelector("input").addEventListener("change", (e) => GOverlay.setWalkingMaskEnabled(e.target.checked));
+
   // ---------- 이벤트 ----------
   el.modeSeg.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-mode]");
@@ -454,12 +509,12 @@
     player.speak("음성 확인입니다. 이 문장이 들리면 신호 안내를 사용할 수 있습니다.");
   });
   el.btnMute.addEventListener("click", () => {
-    if (state.mode !== "traffic") return;
+    if (!["traffic","walking"].includes(state.mode)) return;
     state.voiceEnabled = !state.voiceEnabled;
     savePrefs();
     if (state.voiceEnabled && (state.running || state.starting) && !state.stopping && state.cameraOn && !document.hidden) {
       const model = state.models.find(m => m.id === el.modelSelect.value);
-      guidance.start(state.sessionId, !!model?.is_mock);
+      guidance.start(state.sessionId, !!model?.is_mock, state.mode);
     } else guidance.stop(state.voiceEnabled && (state.running || state.starting)
       ? "음성 안내가 켜져 있습니다. 화면과 카메라가 준비되면 음성을 껐다 켜 주세요." : idleVoiceText());
   });

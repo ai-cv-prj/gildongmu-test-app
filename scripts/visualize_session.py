@@ -30,6 +30,25 @@ def session_title(session: Path, size: tuple[int, int]) -> np.ndarray:
     return card
 
 
+# 보행 위험 세션 판별
+def walking_record(session: Path, frame_id: int, result: dict) -> bool:
+    """위험 판단 기록이 있으면 실시간 화면과 같은 렌더러를 쓴다."""
+    return bool((result.get("event") or {}).get("risk_schema_version")
+                or (session / "inputs" / f"{frame_id:08d}.json").is_file())
+
+
+# 저장된 위험 판단으로 한 장 그리기
+def render_walking(session: Path, frame: np.ndarray, frame_id: int) -> np.ndarray:
+    """마스크와 ROI·경고를 결과 영상과 같은 방식으로 합성한다."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from backend.app.inference.walking_render import render_frame
+
+    record_path = session / "risk" / f"{frame_id:08d}.json"
+    record = json.loads(record_path.read_text(encoding="utf-8")) if record_path.is_file() else {"error": "missing risk record"}
+    mask = cv2.imread(str(session / record["mask_path"]), cv2.IMREAD_UNCHANGED) if record.get("mask_path") else None
+    return render_frame(frame, record, mask)
+
+
 def process_session(session: Path, combined: cv2.VideoWriter | None,
                     combined_size: tuple[int, int] | None, combined_fps: float | None
                     ) -> None:
@@ -66,7 +85,8 @@ def process_session(session: Path, combined: cv2.VideoWriter | None,
                     print(f"[건너뜀] 프레임을 읽을 수 없습니다: {frame_path}")
                     missing += 1
                     continue
-                annotated = render(frame, result)
+                annotated = (render_walking(session, frame, frame_id)
+                             if walking_record(session, frame_id, result) else render(frame, result))
                 height, width = annotated.shape[:2]
                 if video is None:
                     video_size = (width, height)

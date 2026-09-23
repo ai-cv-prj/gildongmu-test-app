@@ -10,6 +10,8 @@ window.GOverlay = (() => {
   const COLORS = ["#4f8cff", "#34c759", "#ffb020", "#ff4d4f", "#b57bff", "#22c9c9"];
   let drawVersion = 0;
   let pendingDraw = null;
+  let walkingMaskEnabled = true;
+  let lastWalking = null;
   let maskCanvas = null, maskContext = null, maskPixels = null;
   // RGBA 바이트 배열을 같은 플랫폼의 uint32로 읽어 엔디언에 무관하게 채운다.
   const MASK_COLORS = new Uint32Array(new Uint8Array([
@@ -111,6 +113,7 @@ window.GOverlay = (() => {
   function clear(status = "superseded") {
     finishDraw(status);
     drawVersion += 1;
+    lastWalking = null;
     const { w, h } = fit();
     ctx.clearRect(0, 0, w, h);
   }
@@ -159,38 +162,44 @@ window.GOverlay = (() => {
   }
 
   // PNG 이미지 디코딩 대기 없이 마스크 복원
-  /** 길이·색상 구간을 원래 RGBA 픽셀로 복원하고 기존 영상 영역에 그린다. */
+  /** 길이·색상 구간을 원래 RGBA 픽셀로 되돌린 canvas를 반환한다. */
+  function decodeRleMask(mask) {
+    const { width, height, data } = mask;
+    const count = width * height;
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0
+        || count > 4194304 || typeof data !== "string" || data.length > 21848) {
+      throw new Error("잘못된 마스크 크기");
+    }
+    const raw = atob(data);
+    if (!raw.length || raw.length % 4) throw new Error("잘못된 마스크 데이터");
+    const bytes = Uint8Array.from(raw, (character) => character.charCodeAt(0));
+    const runs = new DataView(bytes.buffer);
+    if (!maskCanvas) {
+      maskCanvas = document.createElement("canvas");
+      maskContext = maskCanvas.getContext("2d");
+    }
+    if (!maskPixels || maskCanvas.width !== width || maskCanvas.height !== height) {
+      maskCanvas.width = width; maskCanvas.height = height;
+      maskPixels = maskContext.createImageData(width, height);
+    }
+    const pixels = new Uint32Array(maskPixels.data.buffer);
+    let cursor = 0;
+    for (let offset = 0; offset < bytes.length; offset += 4) {
+      const run = runs.getUint32(offset, true), color = run & 3, length = run >>> 2;
+      if (!length || color > 2 || cursor + length > count) throw new Error("잘못된 마스크 구간");
+      pixels.fill(MASK_COLORS[color], cursor, cursor + length);
+      cursor += length;
+    }
+    if (cursor !== count) throw new Error("마스크 픽셀 누락");
+    maskContext.putImageData(maskPixels, 0, 0);
+    return maskCanvas;
+  }
+
+  // 복원한 마스크를 영상 영역에 표시
+  /** 복원에 실패하면 기존과 같이 오류로 정리한다. */
   function drawRleMask(mask, version) {
     try {
-      const { width, height, data } = mask;
-      const count = width * height;
-      if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0
-          || count > 4194304 || typeof data !== "string" || data.length > 21848) {
-        throw new Error("잘못된 마스크 크기");
-      }
-      const raw = atob(data);
-      if (!raw.length || raw.length % 4) throw new Error("잘못된 마스크 데이터");
-      const bytes = Uint8Array.from(raw, (character) => character.charCodeAt(0));
-      const runs = new DataView(bytes.buffer);
-      if (!maskCanvas) {
-        maskCanvas = document.createElement("canvas");
-        maskContext = maskCanvas.getContext("2d");
-      }
-      if (!maskPixels || maskCanvas.width !== width || maskCanvas.height !== height) {
-        maskCanvas.width = width; maskCanvas.height = height;
-        maskPixels = maskContext.createImageData(width, height);
-      }
-      const pixels = new Uint32Array(maskPixels.data.buffer);
-      let cursor = 0;
-      for (let offset = 0; offset < bytes.length; offset += 4) {
-        const run = runs.getUint32(offset, true), color = run & 3, length = run >>> 2;
-        if (!length || color > 2 || cursor + length > count) throw new Error("잘못된 마스크 구간");
-        pixels.fill(MASK_COLORS[color], cursor, cursor + length);
-        cursor += length;
-      }
-      if (cursor !== count) throw new Error("마스크 픽셀 누락");
-      maskContext.putImageData(maskPixels, 0, 0);
-      paintMask(maskCanvas, version);
+      paintMask(decodeRleMask(mask), version);
     } catch (_) {
       if (version === drawVersion) clear("error");
     }
@@ -202,6 +211,39 @@ window.GOverlay = (() => {
     finishDraw("superseded");
     const completion = new Promise((resolve) => { pendingDraw = resolve; });
     const version = ++drawVersion;
+    if (event.risk_schema_version) {
+      lastWalking = { detections, event };
+      const paint = (mask, status) => {
+        if (version !== drawVersion) return;
+        const { w, h } = fit();
+        const r = contentRect(w, h);
+        ctx.clearRect(0, 0, w, h);
+        // 회전·카메라 재시작으로 화면 비율이 바뀌면 다른 비율의 좌표를 재사용하지 않는다.
+        if (Math.abs(event.image_width / event.image_height - r.w / r.h) > 0.04) {
+          finishDraw("skipped");
+          return;
+        }
+        if (mask && walkingMaskEnabled) ctx.drawImage(mask, r.x, r.y, r.w, r.h);
+        GWalkingOverlay.draw(ctx, r, detections, event);
+        if (status) finishDraw(status);
+      };
+      if (walkingMaskEnabled && event.mask_rle) {
+        let mask = null;
+        try { mask = decodeRleMask(event.mask_rle); } catch (_) { mask = null; }
+        paint(mask, "drawn");
+      } else if (walkingMaskEnabled && event.mask_png) {
+        // 마스크 없이 경고를 먼저 그리고, 디코딩이 끝나면 같은 프레임에 겹쳐 그린다.
+        paint(null, null);
+        const mask = new Image();
+        mask.onload = () => paint(mask, "drawn");
+        mask.onerror = () => paint(null, "drawn");
+        mask.src = `data:image/png;base64,${event.mask_png}`;
+      } else {
+        paint(null, "drawn");
+      }
+      return completion;
+    }
+    lastWalking = null;
     if (event.mask_rle) {
       drawRleMask(event.mask_rle, version);
       return completion;
@@ -256,5 +298,9 @@ window.GOverlay = (() => {
   }
 
   window.addEventListener("resize", () => fit());
-  return { draw, clear, describeDetection, describeCrosswalkEvent };
+  function setWalkingMaskEnabled(enabled) {
+    walkingMaskEnabled = !!enabled;
+    if (lastWalking) draw(lastWalking.detections, lastWalking.event);
+  }
+  return { draw, clear, describeDetection, describeCrosswalkEvent, setWalkingMaskEnabled };
 })();
