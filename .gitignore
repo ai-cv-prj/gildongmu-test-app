@@ -25,5 +25,6 @@ workbench/
 
 # 개발 도구 설정
 .agents/
+.claude/
 AGENTS.md
 .vscode/
