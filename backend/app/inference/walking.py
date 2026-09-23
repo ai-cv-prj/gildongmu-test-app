@@ -7,7 +7,7 @@ file_path: backend/app/inference/walking.py
 가중치: backend/models/walking/finetune_v2_exp02_stage2_best.pt (gildongmu exp02 stage2)
 학습 설정: imgsz 640, NMS head
 실행 패키지: torch==2.14.0+cu130, torchvision==0.29.0+cu130, ultralytics==8.4.152
-(앱의 .venv에 설치, backend/requirements.txt에는 넣지 않는다)
+(앱의 .venv에 설치, requirements.txt에는 넣지 않는다)
 """
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ class WalkingPipeline:
             self.segmenter=SidewalkSegmenter(self.settings.walking_mask_weights,self.device,self.settings.walking_precision)
             probe=RiskEngine(self.risk_config,self.tracking_config)
             if self.tracking_config["enabled"] and probe.tracker.status!="active":
-                raise RuntimeError("walking 추적기를 초기화하지 못했습니다. requirements-walking.txt를 확인하세요")
+                raise RuntimeError("walking 추적기를 초기화하지 못했습니다. requirements.txt를 확인하세요")
             snapshot={"risk_config":self.risk_config,"tracking_config":self.tracking_config,
                       "yolo_config":yc,"label_ids":self.segmenter.label_ids,
                       "precision":self.settings.walking_precision,"overlay_alpha":.55,

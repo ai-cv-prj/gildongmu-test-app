@@ -80,7 +80,7 @@ cd gildongmu-test-app
 git clone https://github.com/ai-cv-prj/gildongmu-test-app.git
 cd gildongmu-test-app
 py -3 -m venv .venv
-.venv\Scripts\pip install -r backend\requirements.txt
+.venv\Scripts\pip install -r requirements.txt
 copy .env.example .env
 .venv\Scripts\python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
@@ -221,7 +221,7 @@ WSL 안에서 서버를 켜도 Windows 브라우저에서 http://127.0.0.1:8000 
 .venv/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 ```
 
-`False` 가 나오면 CPU 용 torch 가 깔린 것입니다. https://pytorch.org/get-started/locally/ 에서 본인 GPU 와 CUDA 에 맞는 설치 명령을 확인하세요. RTX 50 시리즈는 CUDA 12.8 이상 빌드가 필요합니다. 이 패키지들은 `backend/requirements.txt` 에 추가하지 마세요 (7장 참고).
+`False` 가 나오면 CPU 용 torch 가 깔린 것입니다. https://pytorch.org/get-started/locally/ 에서 본인 GPU 와 CUDA 에 맞는 설치 명령을 확인하세요. RTX 50 시리즈는 CUDA 12.8 이상 빌드가 필요합니다. 이 패키지들은 `requirements.txt` 에 추가하지 마세요 (7장 참고).
 
 ### 5-2. 가중치 파일 넣기
 
@@ -475,9 +475,9 @@ ffmpeg -framerate 10 -pattern_type glob -i 'backend/data/sessions/<세션>/frame
 
 - 가중치는 Git 으로 주고받지 마세요. 용량 때문에 push 가 막힙니다. 공유가 필요하면 드라이브를 쓰세요.
 - 추론 코드를 공유하고 싶으면 **본인 기능 파일 하나만** 커밋하세요 (`traffic.py` / `walking.py` / `bus.py`). 파일이 기능별로 나뉘어 있어서 서로 충돌하지 않습니다.
-- `torch`, `ultralytics` 같은 모델 패키지는 `backend/requirements.txt` 에 넣지 마세요. 사람마다 GPU 와 버전이 달라서 다른 팀원의 설치가 깨집니다. 필요한 패키지와 버전은 본인 기능 파일 맨 위 주석에 적어 두세요.
+- `torch`, `ultralytics` 같은 모델 패키지는 `requirements.txt` 에 넣지 마세요. 사람마다 GPU 와 버전이 달라서 다른 팀원의 설치가 깨집니다. 필요한 패키지와 버전은 본인 기능 파일 맨 위 주석에 적어 두세요.
 - 공통 코드(API, 저장, 화면)를 고쳐야 할 것 같으면 먼저 팀에 이야기해 주세요.
-- 뼈대가 업데이트되면 `git pull` 후 서버를 재시작합니다. 패키지가 추가됐으면 `.venv/bin/pip install -r backend/requirements.txt` 를 다시 실행합니다.
+- 뼈대가 업데이트되면 `git pull` 후 서버를 재시작합니다. 패키지가 추가됐으면 `.venv/bin/pip install -r requirements.txt` 를 다시 실행합니다.
 
 ## 8. 문제 해결
 

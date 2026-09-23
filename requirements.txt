@@ -1,0 +1,26 @@
+# file_path: requirements.txt
+# 서버·테스트·보행 추론 패키지 목록
+
+# 공통
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+python-dotenv>=1.0
+opencv-python-headless>=4.9
+numpy>=1.26
+pydantic>=2.6
+
+# 테스트
+pytest>=8
+httpx>=0.27
+
+# 보행 추론 (Python 3.12 이상)
+# torch·torchvision·Ultralytics는 실행 환경에 맞춰 별도 설치
+# Python 3.14에서는 해당 wheel이 있는 lap 0.5.13 사용
+lap==0.5.12; python_version < "3.14"
+lap==0.5.13; python_version >= "3.14"
+transformers==5.17.0
+scipy==1.18.1
+PyYAML==6.0.3
+Pillow==12.3.0
+imageio-ffmpeg==0.6.0

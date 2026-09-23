@@ -56,7 +56,7 @@ YOLO는 `predict()`로 검출하고, 그 결과를 Ultralytics의 실제 `BOTSOR
 검증한 모델 패키지는 `ultralytics==8.4.150`, 객체 매칭 의존성은 `lap==0.5.13`입니다.
 현재 프로젝트 가상환경에 lap을 설치했습니다. 다른 환경에서는 모델용 가상환경에
 `.venv/bin/python -m pip install 'lap>=0.5.12,<0.6'`를 실행하세요.
-GPU 환경이 다른 팀원에게 영향을 주지 않도록 공용 backend/requirements.txt는 변경하지 않습니다.
+GPU 환경이 다른 팀원에게 영향을 주지 않도록 공용 requirements.txt는 변경하지 않습니다.
 외형 재식별(ReID)은 꺼져 있으므로 추가 모델을 내려받지 않습니다.
 
 미확정 트랙도 현재 실제 검출에 연결된 ID는 즉시 사용합니다. 신호등 하나의 임시 선택과

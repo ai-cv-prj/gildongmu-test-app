@@ -7,7 +7,7 @@
 보행 위험 기능은 Python 3.12 이상을 기준으로 작성했다. 현재 앱의 Python 3.14 환경을 유지했고, 기존 integration Python 3.12 환경에서 실제 모델 두 개, 위험 엔진, 원본/마스크 저장, H.264 영상 출력을 검증했다. 3.12에서 FastAPI 서버 전체를 새 환경에 설치해 실행하는 검증은 하지 않았다.
 
 - 모델 공통 버전: torch 2.14.0+cu130, torchvision 0.29.0+cu130, ultralytics 8.4.152.
-- 보도/영상 추가 패키지: `backend/requirements-walking.txt`.
+- 서버·테스트·보도/영상 패키지: `requirements.txt`.
 - lap: Python 3.12는 integration과 같은 0.5.12, Python 3.14는 해당 wheel이 있는 0.5.13. 설치 파일의 환경 조건이 자동 선택한다.
 - transformers 5.17.0, scipy 1.18.1, PyYAML 6.0.3, Pillow 12.3.0, imageio-ffmpeg 0.6.0.
 - 3.14 전용 문법/API를 사용하지 않는다. 3.12 문법 파싱과 위험 회귀 테스트를 수행했다.
@@ -16,8 +16,7 @@
 
 ```bash
 # 앞으로 만들어 둔 Python 3.12 환경을 활성화한 상태에서 실행
-python -m pip install -r backend/requirements.txt
-python -m pip install -r backend/requirements-walking.txt
+python -m pip install -r requirements.txt
 python -m pytest tests -q
 python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```

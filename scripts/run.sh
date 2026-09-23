@@ -8,7 +8,7 @@ if [ ! -x .venv/bin/python ]; then
   echo "[run] .venv 생성 중 ($PY)"
   "$PY" -m venv .venv
   .venv/bin/pip install --upgrade pip >/dev/null
-  .venv/bin/pip install -r backend/requirements.txt
+  .venv/bin/pip install -r requirements.txt
 fi
 [ -f .env ] || { cp .env.example .env; echo "[run] .env 를 만들었습니다"; }
 set -a; source .env; set +a
