@@ -64,13 +64,23 @@ def validate(result: object, mode: str) -> list[str]:
 
 
 def detection_style(d: dict) -> tuple[str, tuple[int, int, int]]:
+    if d.get("class_name") == "crosswalk":
+        from backend.app.services.video_service import crosswalk_style
+
+        return crosswalk_style(d)
     if d.get("class_name") == "pedestrian_signal":
         extra = d.get("extra") or {}
+        selection = extra.get("selection_status")
+        if selection in {"unselected", "candidate"}:
+            color = (32, 176, 255) if selection == "candidate" else (255, 140, 79)
+            return f"{selection.upper()} det {d['confidence']:.2f}", color
         state = extra.get("signal_state")
         colors = {"red": (59, 57, 229), "green": (74, 168, 31), "unknown": (136, 136, 136)}
         if state in colors:
             score = extra.get("color_confidence")
             label = state.upper()
+            if selection == "selected":
+                label = f"TARGET {label}"
             if state != "unknown" and isinstance(score, (int, float)):
                 label += f" {score * 100:.1f}%"
             return label, colors[state]
@@ -80,7 +90,7 @@ def detection_style(d: dict) -> tuple[str, tuple[int, int, int]]:
 def draw(frame: np.ndarray, result: dict) -> np.ndarray:
     out = frame.copy()
     h, w = out.shape[:2]
-    for d in result.get("detections", []):
+    for d in sorted(result.get("detections", []), key=lambda d: d["class_name"] != "crosswalk"):
         b = d["box"]
         p1, p2 = (int(b["x1"] * w), int(b["y1"] * h)), (int(b["x2"] * w), int(b["y2"] * h))
         label, color = detection_style(d)
@@ -105,6 +115,7 @@ def main() -> int:
         return 0
     if not args.mode or not args.image:
         ap.error("--mode 와 --image 가 필요합니다")
+    confidence = args.conf if args.conf is not None else (0.25 if args.mode in ("traffic", "walking") else 0.4)
 
     frame = cv2.imread(str(args.image))
     if frame is None:
@@ -128,13 +139,16 @@ def main() -> int:
         return 1
     print(f"[통과] load()  {1000 * (time.perf_counter() - t):.0f} ms")
 
-    confidence = args.conf if args.conf is not None else (0.25 if args.mode == "walking" else 0.4)
     pipe.reset_session("check")
     times, result = [], None
     for i in range(1, 6):
         t = time.perf_counter()
         try:
-            result = pipe.infer(frame, InferenceContext(session_id="check", frame_id=i, captured_at_ms=int(time.monotonic()*1000) if args.mode == "walking" else 0, confidence=confidence))
+            result = pipe.infer(frame, InferenceContext(
+                session_id="check", frame_id=i,
+                # 보행 위험 판단은 시간 간격을 쓰므로 단조 증가 시각을 준다
+                captured_at_ms=int(time.monotonic() * 1000) if args.mode == "walking" else 0,
+                confidence=confidence))
         except Exception as exc:  # noqa: BLE001
             print(f"[실패] infer(): {type(exc).__name__}: {exc}")
             return 1
@@ -148,7 +162,7 @@ def main() -> int:
         for e in errs:
             print("   -", e)
         return 1
-    event_summary = ({k:v for k,v in result["event"].items() if k not in ("mask_png","settings_snapshot")}
+    event_summary = ({k:v for k,v in result["event"].items() if k not in ("mask_png","mask_rle","settings_snapshot")}
                      if args.mode == "walking" else result["event"])
     print(f"[통과] 반환 형식  검출 {len(result['detections'])}개, event={event_summary}")
     for d in result["detections"]:

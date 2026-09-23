@@ -75,7 +75,16 @@ class MockPipeline:
             )
 
         detections = [d for d in detections if d["confidence"] >= context.confidence]
-        return {"detections": detections, "event": self._event(cname, context.frame_id)}
+        event = self._event(cname, context.frame_id)
+        if self.mode == "traffic":
+            # 음성 정책도 실제 모델과 같은 선택 인덱스·대상 번호 계약으로 점검한다.
+            selected = next((i for i, d in enumerate(detections)
+                             if d["track_id"] == 1 and d["class_name"] in {"red_light", "green_light"}), None)
+            event["selected_detection_index"] = selected
+            event["detected_signal_count"] = sum(d["class_name"] != "crosswalk" for d in detections)
+            if selected is None:
+                event["signal_state"] = "unknown"
+        return {"detections": detections, "event": event}
 
     def _event(self, main_class: str, frame_id: int) -> dict[str, Any]:
         if self.mode == "traffic":

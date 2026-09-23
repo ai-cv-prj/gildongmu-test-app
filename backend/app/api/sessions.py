@@ -7,11 +7,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
-from ..schemas import FrameResponse, SessionCreate, SessionCreated, SessionDetail, SessionList, StopResponse
+from pydantic import ValidationError
+
+from ..schemas import ClientTimingBatch, FrameResponse, SessionCreate, SessionCreated, SessionDetail, SessionList, StopResponse
 from ..services.session_service import SessionError, SessionService
 from ..services.storage_service import StorageError
 from .deps import get_service
@@ -43,6 +45,36 @@ async def upload_frame(
         svc.process_frame, session_id, data, image.content_type or "", frame_id, captured_at_ms, client_sent_at_ms
     )
     return FrameResponse(**result)
+
+
+# 폰에서 측정한 지연 로그 저장
+@router.post("/sessions/{session_id}/client-timings")
+async def upload_client_timings(
+    session_id: str,
+    request: Request,
+    svc: SessionService = Depends(get_service),
+) -> dict:
+    """최대 25개 측정값을 저장하며 종료 직후 도착하는 로그도 허용한다."""
+    svc.get(session_id)  # 존재 및 경로 검증; 종료된 세션에도 마지막 로그를 남긴다.
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > 64 * 1024:
+            raise SessionError(413, "timings_too_large", "지연 로그는 요청당 64KB 이하여야 합니다")
+        data.extend(chunk)
+    try:
+        batch = ClientTimingBatch.model_validate_json(data)
+    except ValidationError as exc:
+        raise SessionError(422, "invalid_timings", "지연 로그 형식이 올바르지 않습니다") from exc
+    records = [
+        {"schema_version": 1, "session_id": session_id, "batch_id": batch.batch_id,
+         "dropped_records": batch.dropped_records, **row.model_dump()}
+        for row in batch.records
+    ]
+    try:
+        await run_in_threadpool(svc.storage.append_client_timings, session_id, records)
+    except StorageError as exc:
+        raise SessionError(507, "storage_failed", str(exc)) from exc
+    return {"session_id": session_id, "saved_count": len(records)}
 
 
 # 실행 중인 세션의 실시간 탐지 영상 저장
@@ -78,8 +110,11 @@ async def upload_recording(
 
 
 @router.post("/sessions/{session_id}/stop", response_model=StopResponse)
-async def stop_session(session_id: str, svc: SessionService = Depends(get_service)) -> StopResponse:
+async def stop_session(session_id: str, background_tasks: BackgroundTasks,
+                       svc: SessionService = Depends(get_service)) -> StopResponse:
     row, already = await run_in_threadpool(svc.stop, session_id)
+    if not already and row.get("video_status") == "pending":
+        background_tasks.add_task(svc.generate_video, session_id)
     return StopResponse(session=row, already_stopped=already)
 
 
@@ -120,6 +155,18 @@ def get_frame_image(session_id: str, frame_id: int, svc: SessionService = Depend
         raise SessionError(404, "frame_not_found", "프레임 이미지가 없습니다")
     return FileResponse(path, media_type="image/jpeg")
 
+@router.get("/sessions/{session_id}/video")
+def get_session_video(session_id: str, svc: SessionService = Depends(get_service)) -> FileResponse:
+    row = svc.get(session_id)
+    if row.get("video_status") != "ready":
+        raise SessionError(404, "video_not_ready", "세션 영상이 아직 없습니다")
+    path = svc.storage.session_dir(session_id) / row["video_path"]
+    if not path.is_file():
+        raise SessionError(404, "video_not_found", "세션 영상 파일이 없습니다")
+    return FileResponse(path, media_type="video/mp4", filename=f"{session_id}.mp4")
+
+
+# 보행 위험 세션은 촬영 간격을 보존한 별도 결과 영상을 만든다
 @router.post("/sessions/{session_id}/export")
 def retry_result_video(session_id: str, svc: SessionService = Depends(get_service)) -> dict:
     return svc.retry_export(session_id)

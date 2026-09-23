@@ -22,6 +22,7 @@ from ..inference.base import InferenceContext, InferencePipeline
 from ..inference.registry import PipelineLoadError, PipelineRegistry
 from ..schemas import SessionCreate
 from .storage_service import SessionStorage, StorageError
+from .video_service import VIDEO_REL_PATH, export_session_video
 
 log = logging.getLogger(__name__)
 
@@ -162,6 +163,8 @@ class SessionService:
                 "average_server_ms": None,
                 "p95_server_ms": None,
                 "last_error": None,
+                "video_status": None,
+                "video_path": None,
                 "settings": req.settings.model_dump(),
                 "client": req.client.model_dump(),
             }
@@ -290,7 +293,11 @@ class SessionService:
             with active.lock:
                 ended = utc_now()
                 try:
-                    self._flush_manifest(active, status="completed", ended_at=iso(ended), ended_at_local=local_iso(ended))
+                    # 보행 위험 세션은 촬영 간격을 보존하는 walking_export가 따로 만든다
+                    video_status = ("walking_export" if active.manifest.get("walking_risk")
+                                    else "pending" if self.settings.save_frames and active.frame_count else "no_frames")
+                    self._flush_manifest(active, status="completed", ended_at=iso(ended),
+                                         ended_at_local=local_iso(ended), video_status=video_status)
                 except StorageError as exc:
                     raise SessionError(507, "storage_failed", f"세션 요약 저장 실패: {exc}") from exc
                 try:
@@ -302,6 +309,32 @@ class SessionService:
                 self._exporter().submit(self.storage.session_dir(session_id))
             log.info("session stopped %s frames=%d errors=%d", session_id, active.frame_count, active.error_count)
             return self.get(session_id), False
+
+    def generate_video(self, session_id: str) -> None:
+        """종료 응답 뒤 실행한다. 영상 실패는 세션 기록에 남긴다."""
+        try:
+            path = export_session_video(self.storage.session_dir(session_id))
+            status = "ready" if path else "no_frames"
+            error = None
+        except Exception as exc:  # noqa: BLE001
+            log.exception("video generation failed for %s", session_id)
+            status = "failed"
+            error = str(exc)
+        manifest = self.storage.read_manifest(session_id)
+        if manifest is not None:
+            manifest.update(video_status=status, video_path=VIDEO_REL_PATH if status == "ready" else None,
+                            video_error=error)
+            try:
+                self.storage.write_manifest(session_id, manifest)
+            except StorageError:
+                log.exception("cannot save video status for %s", session_id)
+
+    def recover_pending_videos(self) -> None:
+        """영상 생성 중 서버가 종료된 세션을 재시작 뒤 다시 처리한다."""
+        for session_id in self.storage.list_session_ids():
+            manifest = self.storage.read_manifest(session_id)
+            if manifest and manifest.get("video_status") == "pending":
+                self.generate_video(session_id)
 
     def _flush_manifest(self, active: ActiveSession, **extra: Any) -> None:
         active.manifest.update(
@@ -319,6 +352,9 @@ class SessionService:
     def _row(self, session_id: str, m: dict[str, Any]) -> dict[str, Any]:
         active = self._active
         live = active is not None and active.id == session_id
+        video_path = m.get("video_path")
+        if video_path is None and (self.storage.session_dir(session_id) / VIDEO_REL_PATH).is_file():
+            video_path = VIDEO_REL_PATH  # 수동 생성한 기존 세션 영상도 조회 가능
         return {
             "id": session_id,  # 폴더 이름이 곧 세션 ID
             "mode": m.get("mode", "traffic"),
@@ -336,6 +372,8 @@ class SessionService:
             "p95_server_ms": m.get("p95_server_ms"),
             "storage_path": str(self.storage.session_dir(session_id)),
             "last_error": m.get("last_error"),
+            "video_status": "ready" if video_path else m.get("video_status"),
+            "video_path": video_path,
             "raw_frame_count": active.manifest.get("raw_frame_count", active.frame_count) if live else m.get("raw_frame_count", m.get("frame_count", 0)),
             "export": self._export_status(session_id) if m.get("walking_risk") else None,
             "settings": m.get("settings", {}),

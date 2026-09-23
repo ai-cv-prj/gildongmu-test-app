@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -31,6 +32,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         service = SessionService(settings, storage, registry)
         service.recover_on_startup()
         app.state.service = service
+        threading.Thread(target=service.recover_pending_videos, name="video-recovery", daemon=True).start()
         try:
             yield
         finally:

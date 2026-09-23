@@ -11,14 +11,20 @@ file_path: backend/app/inference/walking.py
 """
 from __future__ import annotations
 
+import base64
 import logging
 from typing import Any
 
+import cv2
 import numpy as np
 
 from .base import InferenceContext, ModelSpec, normalize_box
 
 log = logging.getLogger(__name__)
+LABEL_COLORS = {
+    "walkable": (0, 255, 0),
+    "crosswalk": (180, 105, 255),  # 참고 파일과 동일한 OpenCV BGR 순서
+}
 
 # gildongmu configs/schema/classes.yaml 의 canonical 순서와 같아야 한다.
 CLASS_NAMES: dict[int, str] = {
@@ -40,6 +46,44 @@ PATH_MIN_BOTTOM = 0.55
 def in_walking_path(box: dict[str, float]) -> bool:
     """정규화 박스가 화면 하단 중앙의 진행 경로 구간과 겹치는지 반환한다."""
     return box["x2"] >= PATH_X_RANGE[0] and box["x1"] <= PATH_X_RANGE[1] and box["y2"] >= PATH_MIN_BOTTOM
+
+
+# 보행가능 영역과 횡단보도를 휴대폰 표시용 데이터로 변환
+def make_segmentation_event(class_map: np.ndarray, label_ids: dict[str, int]) -> dict[str, Any]:
+    """픽셀을 바꾸지 않는 RLE 마스크를 만들고 복잡한 마스크만 PNG로 반환한다."""
+    if class_map.ndim != 2 or not class_map.size:
+        raise ValueError("마스크는 비어 있지 않은 2차원 배열이어야 합니다.")
+    # 전송용 번호는 모델 라벨 순서와 무관하게 투명=0, 초록=1, 핑크=2다.
+    labels = np.zeros(class_map.shape, dtype=np.uint8)
+    ratios = {}
+    for code, name in enumerate(LABEL_COLORS, start=1):
+        mask = class_map == label_ids[name]
+        labels[mask] = code
+        ratios[f"{name}_ratio"] = float(mask.mean())
+    event = {
+        "type": "walking_warning",
+        "warning": False,  # 영역 분할만 수행하며 장애물 위험 여부는 판단하지 않는다.
+        "warning_text": "",
+        **ratios,
+    }
+    flat = labels.reshape(-1)
+    starts = np.r_[0, np.flatnonzero(flat[1:] != flat[:-1]) + 1]
+    # 같은 색이 이어지는 길이와 색 번호를 little-endian uint32 한 개에 담는다.
+    # 지나치게 많은 구간은 브라우저 루프·응답 크기를 늘리므로 PNG로 보낸다.
+    if starts.size <= 4096 and flat.size <= 4194304:
+        lengths = np.diff(np.r_[starts, flat.size]).astype(np.uint32)
+        runs = ((lengths << 2) | flat[starts]).astype("<u4")
+        event["mask_rle"] = {
+            "width": int(labels.shape[1]), "height": int(labels.shape[0]),
+            "data": base64.b64encode(runs.tobytes()).decode("ascii"),
+        }
+    else:
+        palette = np.array([(0, 0, 0, 0), *[(*color, 140) for color in LABEL_COLORS.values()]], dtype=np.uint8)
+        ok, encoded = cv2.imencode(".png", palette[labels])
+        if not ok:
+            raise RuntimeError("보행가능·횡단보도 영역 PNG를 생성하지 못했습니다.")
+        event["mask_png"] = base64.b64encode(encoded.tobytes()).decode("ascii")
+    return event
 
 
 class WalkingPipeline:

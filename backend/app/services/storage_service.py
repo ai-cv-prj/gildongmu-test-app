@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ class SessionStorage:
     def __init__(self, sessions_dir: Path, save_frames: bool) -> None:
         self.sessions_dir = sessions_dir
         self.save_frames = save_frames
+        self._client_log_lock = threading.Lock()
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- 디스크 ----
@@ -141,6 +143,18 @@ class SessionStorage:
                 f.flush()
         except OSError as exc:
             raise StorageError(f"cannot append result: {exc}") from exc
+
+    # 클라이언트 지연 로그 일괄 저장
+    def append_client_timings(self, session_id: str, records: list[dict[str, Any]]) -> None:
+        """기존 세션 폴더에 프레임별 측정값을 JSONL로 덧붙인다."""
+        path = self.session_dir(session_id) / "client_timings.jsonl"
+        lines = "".join(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n" for row in records)
+        try:
+            with self._client_log_lock, open(path, "a", encoding="utf-8") as file:
+                file.write(lines)
+                file.flush()
+        except OSError as exc:
+            raise StorageError(f"cannot append client timings: {exc}") from exc
 
     def read_results(self, session_id: str, after_frame_id: int, limit: int) -> list[dict[str, Any]]:
         path = self.session_dir(session_id) / "results.jsonl"

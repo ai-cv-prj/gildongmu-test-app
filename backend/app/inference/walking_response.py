@@ -1,8 +1,6 @@
 """One warning meaning for the live canvas and recorded result video."""
-import base64
-import cv2
-import numpy as np
 from .base import normalize_box
+from .walking import make_segmentation_event
 
 LEVELS = {"monitor": 0, "caution": 1, "danger": 2}
 NAMES = {"person":"보행자", "bicycle":"자전거", "car":"차량", "bus":"버스", "truck":"트럭",
@@ -45,19 +43,6 @@ def warning_summary(prediction):
     level, _, message = min(candidates, key=lambda x: (-LEVELS[x[0]], x[1], x[2]))
     return level, f"{'위험' if level == 'danger' else '주의'} · {message}"
 
-def mask_preview(class_map, label_ids, max_side=384, alpha=.55):
-    h,w = class_map.shape
-    ratio=min(1.0,max_side/max(h,w))
-    labels=cv2.resize(class_map.astype(np.uint8),(max(1,round(w*ratio)),max(1,round(h*ratio))),interpolation=cv2.INTER_NEAREST)
-    rgba=np.zeros((*labels.shape,4),np.uint8)
-    for label,color in (("walkable",(0,255,0)),("crosswalk",(180,105,255))):
-        selected=labels==label_ids[label]
-        rgba[selected,:3]=color
-        rgba[selected,3]=round(255*alpha)
-    ok,png=cv2.imencode(".png",rgba)
-    if not ok: raise RuntimeError("보도 마스크 표시 인코딩 실패")
-    return base64.b64encode(png.tobytes()).decode("ascii")
-
 def make_response(prediction, shape, class_map, label_ids, metadata):
     h,w=shape[:2]
     detections=[]
@@ -83,6 +68,10 @@ def make_response(prediction, shape, class_map, label_ids, metadata):
     event.update(type="walking_warning",risk_schema_version=1,warning=bool(message),warning_text=message,level=level,
                  counts=counts,detected_count=len(detections),in_path_count=sum(d["extra"]["in_path"] for d in detections),
                  risk_events=prediction["events"],config_sha256=metadata["config_sha256"],
-                 source_revision=metadata["source_revision"],image_width=w,image_height=h,
-                 mask_png=mask_preview(class_map,label_ids))
+                 source_revision=metadata["source_revision"],image_width=w,image_height=h)
+    # 마스크 전송은 기존 보행 영역 기능의 RLE 경로를 그대로 쓴다. 위험 필드가 우선한다.
+    segmentation = make_segmentation_event(class_map,label_ids)
+    for key in ("walkable_ratio","crosswalk_ratio","mask_rle","mask_png"):
+        if key in segmentation:
+            event.setdefault(key,segmentation[key])
     return {"detections":detections,"event":event}

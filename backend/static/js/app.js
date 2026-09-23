@@ -1,5 +1,5 @@
 /**
- * file_path: backend/static/js/app.js
+ * 파일 경로: backend/static/js/app.js
  * 카메라 프레임 전송과 테스트 상태를 관리하고 검출·보행가능·횡단보도 결과를 표시한다.
  */
 (() => {
@@ -11,23 +11,46 @@
     setup: $("setup-panel"), runInfo: $("run-info"), cameraCard: document.querySelector(".camera-card"), modeSeg: $("mode-seg"), modelSelect: $("model-select"), modelHint: $("model-hint"),
     deviceSelect: $("device-select"), deviceCustom: $("device-custom"), note: $("note"),
     btnCamera: $("btn-camera"), btnStart: $("btn-start"), btnStop: $("btn-stop"),
+    guidancePanel: $("guidance-panel"), guidanceText: $("guidance-text"),
+    ttsStatus: $("tts-status"), btnSoundCheck: $("btn-sound-check"),
+    btnMute: $("btn-mute"),
     summary: $("summary"), sId: $("s-id"), sFrames: $("s-frames"), sAvg: $("s-avg"), sPath: $("s-path"),
     alert: $("alert"), exportStatus: $("export-status"), maskToggle: $("walking-mask-toggle"),
   };
 
-  const SETTINGS = { confidence: 0.4, image_max_side: 960, target_fps: 5, jpeg_quality: 0.8, timeout_ms: 5000, retry_wait_ms: 500 };
+  // 기능별로 검증한 입력 크기와 전송 상한을 유지한다. 요청은 항상 하나씩 보낸다.
+  const SETTINGS = { confidence: 0.4, image_max_side: 640, target_fps: 10, jpeg_quality: 0.8, timeout_ms: 5000, retry_wait_ms: 500 };
+  const TRAFFIC_SETTINGS = { confidence: 0.25, image_max_side: 960, target_fps: 5 };
+  // 위험 판단 프로파일과 같은 검출 기준. 입력 크기·전송 상한은 공통값을 쓴다.
+  const WALKING_SETTINGS = { confidence: 0.25 };
   const MODE_LABEL = { traffic: "신호등", walking: "도보 장애물", bus: "버스" };
 
   const state = {
     mode: "traffic", models: [], cameraOn: false, sessionId: null, running: false,
-    frameId: 0, sent: 0, failed: 0, recvTimes: [], stopping: false,
+    frameId: 0, sent: 0, failed: 0, recvTimes: [], starting: false, stopping: false,
+    timings: null, loopTask: null, logWarning: "",
+    voiceEnabled: true,
   };
+
+  const player = GTts.create({
+    onError: (message) => guidance.stop(message),
+    onStatus: (message) => { el.ttsStatus.textContent = message; },
+  });
+  const guidance = GGuidance.create({
+    player,
+    onChange: ({ text }) => {
+      el.guidanceText.textContent = text;
+      refreshButtons();
+    },
+  });
+  setInterval(() => guidance.tick(), 200);
 
   // ---------- 상태 표시 ----------
   function setStatus(node, s, text) { node.dataset.state = s; node.lastChild.textContent = text; }
   function setLabel(btn, text) { btn.querySelector(".btn-label").textContent = text; }
   function setBadge(s, text) { el.badge.dataset.state = s; el.badge.textContent = text; }
   function showAlert(msg, tone = "error") {
+    if (!msg && state.logWarning) { msg = state.logWarning; tone = "info"; }
     if (!msg) { el.alert.hidden = true; return; }
     el.alert.hidden = false; el.alert.dataset.tone = tone; el.alert.textContent = msg;
   }
@@ -67,6 +90,20 @@
     if (ev.type === "traffic_signal") {
       tone = ev.signal_state === "green" ? "green" : ev.signal_state === "red" ? "red" : "";
       text = { green: "초록불", red: "빨간불", unknown: "신호 인식 안 됨" }[ev.signal_state] || "";
+      // 새 응답에서는 검출 성공과 안내 대상 선택 성공을 구분한다.
+      if (Object.prototype.hasOwnProperty.call(ev, "selected_detection_index")) {
+        const count = ev.detected_signal_count ?? dets.filter(d => d.class_name === "pedestrian_signal").length;
+        let detail;
+        if (!count) detail = "신호등 검출 없음";
+        else if (ev.selected_detection_index != null) {
+          detail = ev.signal_state === "unknown" ? "안내 대상 색상 미확인" : `안내 대상 ${text}`;
+        } else {
+          detail = ev.candidate_detection_index != null ? "안내 대상 선택 확인 중" : "안내 대상 선택 불가";
+        }
+        text = count ? `신호등 ${count}개 검출 · ${detail}` : detail;
+      }
+      const crosswalkText = GOverlay.describeCrosswalkEvent(ev);
+      if (crosswalkText) text += ` / ${crosswalkText}`;
     } else if (ev.type === "walking_warning") {
       if (ev.warning) { tone = ev.level === "danger" ? "red" : "warn"; text = ev.warning_text || "장애물 주의"; }
     } else if (ev.type === "bus_detection") {
@@ -82,17 +119,23 @@
   function loadPrefs() {
     try {
       const p = JSON.parse(localStorage.getItem("gildongmu.prefs") || "{}");
+      if (typeof p.voiceEnabled === "boolean") state.voiceEnabled = p.voiceEnabled;
       if (p.mode && MODE_LABEL[p.mode]) selectMode(p.mode, false);
       if (p.device) {
         const has = [...el.deviceSelect.options].some((o) => o.value === p.device);
         if (has) el.deviceSelect.value = p.device;
         else { el.deviceSelect.value = "__custom__"; el.deviceCustom.value = p.device; }
       }
-    } catch (_) { /* ignore */ }
+    } catch (_) { /* 설정 읽기 실패는 무시 */ }
     el.deviceCustom.hidden = el.deviceSelect.value !== "__custom__";
+    if (!state.running && !state.starting) el.guidanceText.textContent = idleVoiceText();
+    refreshButtons();
   }
-  function savePrefs(extra = {}) {
-    try { localStorage.setItem("gildongmu.prefs", JSON.stringify({ mode: state.mode, device: currentDevice(), ...extra })); } catch (_) { /* ignore */ }
+  function savePrefs() {
+    try { localStorage.setItem("gildongmu.prefs", JSON.stringify({ mode: state.mode, device: currentDevice(), voiceEnabled: state.voiceEnabled })); } catch (_) { /* 설정 저장 실패는 무시 */ }
+  }
+  function idleVoiceText() {
+    return state.voiceEnabled ? "음성 안내가 켜져 있습니다. 테스트를 시작하면 신호를 읽습니다." : "음성 안내가 꺼져 있습니다.";
   }
 
   function selectMode(mode, refill = true) {
@@ -106,7 +149,9 @@
     const list = state.models.filter((m) => m.mode === state.mode);
     el.modelSelect.innerHTML = list.map((m) =>
       `<option value="${m.id}" ${m.available ? "" : "disabled"}>${m.name}${m.available ? "" : " (가중치 없음)"}</option>`).join("");
-    const first = list.find((m) => m.available && !m.is_mock) || list.find((m) => m.available);
+    const preferred = state.mode === "traffic" ? "traffic-best-yolo-v2" : null;
+    const first = list.find((m) => m.available && m.id === preferred)
+      || list.find((m) => m.available && !m.is_mock) || list.find((m) => m.available);
     if (first) el.modelSelect.value = first.id;
     updateModelHint();
   }
@@ -118,7 +163,7 @@
 
   function refreshButtons() {
     const ready = state.cameraOn && !!el.modelSelect.value && currentDevice().length > 0;
-    el.btnStart.disabled = !ready || state.running;
+    el.btnStart.disabled = !ready || state.running || state.starting;
     el.btnStart.hidden = state.running;
     el.btnStop.hidden = !state.running;
     // 테스트 중에는 숨기되, 카메라가 끊기면 다시 켤 수 있게 보여준다
@@ -127,6 +172,9 @@
     const locked = state.running || !!state.sessionId;
     el.setup.hidden = locked;
     el.runInfo.hidden = !locked;
+    el.guidancePanel.hidden = state.mode !== "traffic";
+    el.btnMute.disabled = state.mode !== "traffic";
+    el.btnMute.textContent = state.voiceEnabled ? "음성 끄기" : "음성 켜기";
   }
 
   // ---------- 서버 ----------
@@ -152,6 +200,8 @@
 
   // ---------- 카메라 ----------
   async function startCamera() {
+    guidance.stop(state.running && state.voiceEnabled
+      ? "카메라 재시작 후 음성을 껐다 켜서 안내를 재개해 주세요." : idleVoiceText());
     showAlert(null);
     el.btnCamera.disabled = true;
     try {
@@ -169,6 +219,7 @@
     }
   }
   GCamera.setOnEnded(() => {
+    guidance.stop("카메라가 끊겨 음성 안내를 중단했습니다. 카메라를 다시 켠 뒤 음성을 껐다 켜 주세요.");
     state.cameraOn = false;
     el.frame.classList.remove("live");
     setBadge("paused", "카메라 끊김");
@@ -178,20 +229,36 @@
 
   // ---------- 세션 ----------
   async function startSession() {
+    if (state.starting || state.running || state.sessionId) return;
+    state.starting = true;
     showAlert(null);
     el.summary.hidden = true;
     el.btnStart.disabled = true;
+    const settings = { ...SETTINGS, ...(state.mode === "traffic" ? TRAFFIC_SETTINGS
+      : state.mode === "walking" ? WALKING_SETTINGS : {}) };
     const body = {
       mode: state.mode,
       model_id: el.modelSelect.value,
       device_type: currentDevice(),
       note: el.note.value.trim(),
-      settings: { confidence: state.mode === "walking" ? 0.25 : SETTINGS.confidence, image_max_side: SETTINGS.image_max_side, target_fps: SETTINGS.target_fps, jpeg_quality: SETTINGS.jpeg_quality },
-      client: { user_agent: navigator.userAgent, screen_width: screen.width, screen_height: screen.height, platform: navigator.platform || "" },
+      settings: { confidence: settings.confidence, image_max_side: settings.image_max_side,
+        target_fps: settings.target_fps, jpeg_quality: settings.jpeg_quality },
+      client: { user_agent: navigator.userAgent, screen_width: screen.width, screen_height: screen.height, platform: navigator.platform || "", app_version: "walking-risk-v1" },
     };
     try {
+      // 켜기로 선택된 경우 사용자 클릭 안에서 재생을 요청한다.
+      const selectedModel = state.models.find(m => m.id === body.model_id);
+      if (state.mode === "traffic" && state.voiceEnabled) guidance.start(null, !!selectedModel?.is_mock);
+      else guidance.stop();
       const r = await GApi.createSession(body);
       state.sessionId = r.session_id;
+      guidance.bindSession(r.session_id);
+      state.logWarning = "";
+      state.timings = GApi.createTimings(r.session_id, (message) => {
+        if (state.sessionId !== r.session_id) return;
+        state.logWarning = message;
+        if (message) showAlert(message, "info");
+      });
       state.running = true;
       state.frameId = 0; state.sent = 0; state.failed = 0; state.recvTimes = [];
       updateMetrics(null, null);
@@ -206,21 +273,29 @@
       }
       refreshButtons();
       window.scrollTo({ top: 0, behavior: "smooth" });
-      loop();
+      state.loopTask = loop(r.session_id, state.timings, settings);
     } catch (e) {
+      guidance.stop("테스트를 시작하지 못해 음성 안내를 종료했습니다.");
       if (e.code === "session_conflict" && e.detail && e.detail.active_session) {
         showAlert(`이미 실행 중인 세션이 있습니다 (${e.detail.active_session.id}). 서버에서 종료 후 다시 시도하세요.`);
       } else {
         showAlert(`테스트를 시작하지 못했습니다: ${e.message}`);
       }
       refreshButtons();
+    } finally {
+      state.starting = false;
+      refreshButtons();
     }
   }
 
   async function stopSession() {
     if (!state.sessionId) return;
+    guidance.stop(idleVoiceText());
     state.running = false;
     state.stopping = true;
+    refreshButtons();
+    el.btnStop.hidden = false;
+    el.btnStart.hidden = true;
     el.btnStop.disabled = true;
     setLabel(el.btnStop, "종료 중…");
     setBadge("camera", "종료 중");
@@ -233,6 +308,10 @@
           showAlert(`실시간 녹화 저장 실패: ${recordError.message}`);
         }
       }
+      // 마지막 요청과 PNG 디코딩을 정리한 뒤 마지막 묶음까지 저장한다.
+      await state.loopTask;
+      GOverlay.clear();
+      if (!await state.timings.finish()) throw new Error("지연 로그가 아직 저장되지 않았습니다");
       const r = await GApi.stopSession(state.sessionId);
       const s = r.session;
       el.sId.textContent = s.id;
@@ -246,7 +325,6 @@
       el.sPath.textContent = s.storage_path;
       el.summary.hidden = false;
       state.sessionId = null;
-      GOverlay.clear();
       el.banner.hidden = true;
       el.resultRow.innerHTML = '<span class="muted">최근 결과 없음</span>';
       setBadge(state.cameraOn ? "camera" : "idle", state.cameraOn ? "카메라 켜짐" : "대기");
@@ -268,9 +346,11 @@
   // ---------- 전송 루프: 한 번에 요청 하나, 응답 후 최신 프레임 ----------
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  async function loop() {
-    const interval = 1000 / SETTINGS.target_fps;
+  /** 한 번에 한 프레임을 보내며 각 단계의 브라우저 시간을 기록한다. */
+  async function loop(sessionId, timings, settings) {
+    const interval = 1000 / settings.target_fps;
     let paused = false;
+    let previousCapture = null;
     while (state.running) {
       if (document.hidden || !GCamera.active()) {
         if (!paused) { paused = true; setBadge("paused", document.hidden ? "백그라운드 · 일시정지" : "카메라 대기"); }
@@ -280,29 +360,75 @@
       if (paused) { paused = false; setBadge("running", "테스트 중"); showAlert(null); }
 
       const t0 = performance.now();
-      const captureStarted = Math.round(performance.timeOrigin + performance.now());
-      const blob = await GCamera.capture(SETTINGS.image_max_side, SETTINGS.jpeg_quality);
-      if (!blob) { await sleep(100); continue; }
+      // 보행 위험 판단은 프레임 간격으로 운동을 계산하므로 벽시계 대신 단조 증가 시각을 쓴다.
+      const capturedAt = state.mode === "walking"
+        ? Math.round(performance.timeOrigin + performance.now())
+        : Date.now(); // JPEG 생성 이전 시각으로 서버 로그와 연결한다.
       const frameId = ++state.frameId;
-      const capturedAt = state.mode === "walking" ? captureStarted : Date.now();
+      const row = {
+        frame_id: frameId, captured_at_ms: capturedAt, capture_started_ms: t0,
+        capture_ms: 0,
+        capture_interval_ms: previousCapture == null ? null : t0 - previousCapture,
+        jpeg_bytes: 0, recording_active: GRecorder.active(),
+        visibility: document.visibilityState, status: "cancelled", throttle_wait_ms: 0, retry_wait_ms: 0,
+      };
+      previousCapture = t0;
+      let drawing;
       try {
-        const res = await GApi.uploadFrame(state.sessionId, blob, frameId, capturedAt, SETTINGS.timeout_ms);
+        const blob = await GCamera.capture(settings.image_max_side, settings.jpeg_quality);
+        row.capture_ms = performance.now() - t0;
+        row.capture_backend = GCamera.captureBackend?.() || "canvas";
+        row.jpeg_bytes = blob?.size || 0;
         if (!state.running) break;
-        const rtt = performance.now() - t0;
+        if (!blob) {
+          guidance.interrupt();
+          row.status = "error"; row.error_code = "capture_empty";
+          const waitStarted = performance.now();
+          await sleep(100);
+          row.retry_wait_ms = performance.now() - waitStarted;
+          continue;
+        }
+        row.request_started_ms = performance.now();
+        const res = await GApi.uploadFrame(sessionId, blob, frameId, capturedAt, SETTINGS.timeout_ms);
+        row.response_received_ms = performance.now();
+        row.request_ms = row.response_received_ms - row.request_started_ms;
+        row.http_status = 200;
+        if (!state.running) break;
+        row.status = "ok";
         state.sent += 1;
-        state.recvTimes.push(performance.now());
-        if (res.frame_id === frameId) { GOverlay.draw(res.detections, res.event); showResult(res); }
-        updateMetrics(res.timing, rtt);
+        state.recvTimes.push(row.response_received_ms);
+        if (res.frame_id === frameId) {
+          drawing = GOverlay.draw(res.detections, res.event);
+          showResult(res);
+          guidance.accept(res, t0);
+        }
+        // 화면의 기존 '왕복' 표시는 캡처를 포함한 값으로 유지한다.
+        updateMetrics(res.timing, row.response_received_ms - t0);
         if (!res.saved) setStatus(el.storageStatus, "warn", "저장 꺼짐"); else setStatus(el.storageStatus, "ok", "저장");
         setStatus(el.serverStatus, "ok", "서버");
         showAlert(null);
+        const remain = interval - (performance.now() - t0);
+        if (remain > 0) {
+          const waitStarted = performance.now();
+          await sleep(remain);
+          row.throttle_wait_ms = performance.now() - waitStarted;
+        }
       } catch (e) {
+        guidance.interrupt();
+        row.status = "error";
+        row.error_code = e.code || (row.request_started_ms == null ? "capture_failed" : "client_error");
+        row.http_status = e.status || 0;
+        if (row.request_started_ms == null) row.capture_ms = performance.now() - t0;
+        if (row.request_ms == null && row.request_started_ms != null) {
+          row.request_ms = performance.now() - row.request_started_ms;
+        }
         if (!state.running) break;
         state.failed += 1;
         updateMetrics(null, null);
         if (e.status === 409 || e.status === 404) {
           showAlert(`세션이 서버에서 종료되었습니다 (${e.message}). 테스트를 다시 시작하세요.`);
           state.running = false; state.sessionId = null;
+          guidance.stop();
           setBadge("camera", "카메라 켜짐"); refreshButtons();
           break;
         }
@@ -313,14 +439,16 @@
           setStatus(el.serverStatus, "bad", "서버 끊김");
           showAlert(`서버 응답 없음 (${e.message}). 재시도 중…`, "info");
         } else {
-          showAlert(`전송 오류: ${e.message}`);
+          showAlert(`프레임 처리 오류: ${e.message}`);
         }
+        const waitStarted = performance.now();
         await sleep(SETTINGS.retry_wait_ms);
-        continue;
+        row.retry_wait_ms = performance.now() - waitStarted;
+      } finally {
+        timings.track(row, drawing);
       }
-      const remain = interval - (performance.now() - t0);
-      if (remain > 0) await sleep(remain);
     }
+    if (!state.stopping) { GOverlay.clear(); void timings.finish(); }
   }
 
   async function watchExport(id) {
@@ -374,12 +502,28 @@
   el.btnCamera.addEventListener("click", startCamera);
   el.btnStart.addEventListener("click", startSession);
   el.btnStop.addEventListener("click", stopSession);
+  el.btnSoundCheck.addEventListener("click", () => {
+    player.speak("음성 확인입니다. 이 문장이 들리면 신호 안내를 사용할 수 있습니다.");
+  });
+  el.btnMute.addEventListener("click", () => {
+    if (state.mode !== "traffic") return;
+    state.voiceEnabled = !state.voiceEnabled;
+    savePrefs();
+    if (state.voiceEnabled && (state.running || state.starting) && !state.stopping && state.cameraOn && !document.hidden) {
+      const model = state.models.find(m => m.id === el.modelSelect.value);
+      guidance.start(state.sessionId, !!model?.is_mock);
+    } else guidance.stop(state.voiceEnabled && (state.running || state.starting)
+      ? "음성 안내가 켜져 있습니다. 화면과 카메라가 준비되면 음성을 껐다 켜 주세요." : idleVoiceText());
+  });
   // 화면 잠금이나 앱 전환에서 돌아왔을 때 카메라가 죽어 있으면 재시작 버튼을 보여준다
   document.addEventListener("visibilitychange", () => {
+    if (document.hidden) guidance.stop("화면이 숨겨져 음성 안내를 중단했습니다. 돌아온 뒤 음성을 껐다 켜 주세요.");
+    refreshButtons();
     if (document.hidden || !state.cameraOn) return;
     GCamera.video.play().catch(() => {});
     setTimeout(() => {
       if (GCamera.active()) return;
+      guidance.stop("카메라가 끊겨 음성 안내를 종료했습니다.");
       state.cameraOn = false;
       el.frame.classList.remove("live");
       setBadge("paused", "카메라 끊김");
@@ -387,7 +531,8 @@
       refreshButtons();
     }, 800);
   });
-  window.addEventListener("beforeunload", (e) => { if (state.running) { e.preventDefault(); e.returnValue = ""; } });
+  window.addEventListener("beforeunload", (e) => { if (state.sessionId) { e.preventDefault(); e.returnValue = ""; } });
+  window.addEventListener("pagehide", () => guidance.stop());
 
   // ---------- 초기화 ----------
   loadPrefs();
