@@ -19,6 +19,12 @@ Gildongmu 모델을 **휴대폰 카메라로 실시간 테스트**하는 팀 내
                                   └─────────────────────────────────┘
 ```
 
+## 도보 위험 판단 (2026-09-22)
+
+기존 YOLO26n 32클래스 모델에 보도 마스크·ROI·추적 기반 위험 판단을 연결했습니다. 실시간 화면과 결과 MP4에 같은 한국어 경고를 표시하고, 수신한 원본 JPEG는 분석 실패 시에도 보존합니다. 설정, 저장 파일, 영상 재생성, Python 3.12 전환 절차는 [도보 위험 판단 안내](docs/walking-risk.md)를 참고하세요.
+
+실제 도보 모델은 Python 3.12 이상과 `backend/requirements-walking.txt`의 추가 패키지가 필요합니다. 신호등/버스/mock의 기본 설치 절차는 유지합니다. 현재 서버를 실행 중이라면 재시작 후 반영됩니다.
+
 ## 목차
 
 1. [준비물](#1-준비물)
@@ -37,7 +43,7 @@ Gildongmu 모델을 **휴대폰 카메라로 실시간 테스트**하는 팀 내
 
 | 항목 | 설명 |
 | --- | --- |
-| Python 3.10 이상 | `python3 --version` 으로 확인. 모델 학습에 쓰던 버전과 맞추는 것이 안전합니다. |
+| Python 3.10 이상 (보행 위험: 3.12 이상) | `python3 --version` 으로 확인. 모델 학습에 쓰던 버전과 맞추는 것이 안전합니다. |
 | Git | 코드 받기용 |
 | cloudflared | 휴대폰 접속용 HTTPS 주소를 만들어 줍니다. 계정과 로그인은 필요 없습니다. |
 | 본인 모델 가중치 | `.pt` `.pth` `.onnx` `.engine` 파일. 없으면 Mock 으로 먼저 실행해 볼 수 있습니다. |
@@ -379,7 +385,7 @@ ok = [r for r in rows if r["error"] is None]
 print(len(ok), "frames,", sum(r["timing"]["inference_ms"] for r in ok) / len(ok), "ms 평균 추론")
 ```
 
-프레임을 영상으로 이어붙이기:
+프레임을 고정 속도로 이어붙이는 참고 명령입니다. **보행 위험 세션은 자동 생성되는 result_visualized.mp4를 사용하세요.** 이 영상은 실제 촬영 간격과 원본 프레임 대응을 보존합니다.
 
 ```bash
 ffmpeg -framerate 5 -pattern_type glob -i 'backend/data/sessions/<세션>/frames/*.jpg' -pix_fmt yuv420p out.mp4
@@ -434,11 +440,11 @@ ffmpeg -framerate 5 -pattern_type glob -i 'backend/data/sessions/<세션>/frames
 | `APP_PORT` | 8000 | 겹칠 때만 변경 (4-1, 4-2) |
 | `DATA_DIR` | backend/data | 기록 저장 위치. 용량이 큰 드라이브로 바꿀 수 있습니다. |
 | `MODEL_DIR` | backend/models | 가중치 폴더 |
-| `SAVE_FRAMES` | true | false 면 이미지는 저장하지 않고 결과만 저장 |
+| `SAVE_FRAMES` | true | false 면 이미지는 저장하지 않고 결과만 저장. 보행 위험 세션은 원본 필수 저장 |
 | `MAX_UPLOAD_BYTES` | 2097152 | 프레임 한 장 업로드 한도 |
 | `MIN_FREE_DISK_GB` | 2 | 여유 공간이 이보다 적으면 새 테스트를 막음 |
 
-전송 빈도(5 FPS), 해상도(960px), JPEG 품질(0.8), 요청 제한 시간(5초), 신뢰도 기준(0.4)은 `backend/static/js/app.js` 맨 위 `SETTINGS` 에 있습니다.
+전송 빈도(5 FPS), 해상도(960px), JPEG 품질(0.8), 요청 제한 시간(5초), 신뢰도 기준(신호등/버스 0.4, 보행 0.25)은 `backend/static/js/app.js` 맨 위 `SETTINGS` 에 있습니다.
 
 ### 코드 구조
 
