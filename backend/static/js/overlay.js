@@ -259,12 +259,11 @@ window.GOverlay = (() => {
     ctx.lineWidth = 2.5;
     ctx.font = "600 13px -apple-system, Roboto, sans-serif";
     ctx.textBaseline = "top";
-    // 큰 횡단보도 박스 위에 작은 신호등 박스를 그린다. 응답 순서는 변경하지 않는다.
-    const ordered = [...(detections || []).filter(d => d.class_name === "crosswalk"),
-      ...(detections || []).filter(d => d.class_name !== "crosswalk")];
+    // 횡단보도는 내부 선택에만 사용하고 화면의 박스·라벨에서는 제외한다.
+    const visibleDetections = (detections || []).filter(d => d.class_name !== "crosswalk");
     const labelAreas = [];
     const labels = [];
-    for (const d of ordered) {
+    for (const d of visibleDetections) {
       const b = d.box;
       const x1 = r.x + b.x1 * r.w, y1 = r.y + b.y1 * r.h;
       const x2 = r.x + b.x2 * r.w, y2 = r.y + b.y2 * r.h;

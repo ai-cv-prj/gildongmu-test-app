@@ -113,7 +113,7 @@ test("페이지는 통합 API를 앱보다 먼저 로드하고 삭제한 파일�
   const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((match) => match[1]);
   assert.equal(scripts.length, 8);
   assert.equal(scripts[0], "/static/js/api.js?v=latency-v3-cleanup");
-  assert.equal(scripts.at(-1), "/static/js/app.js?v=walking-risk-v1");
+  assert.equal(scripts.at(-1), "/static/js/app.js?v=traffic-display-v14");
   assert.ok(scripts.indexOf("/static/js/tts.js?v=walking-audio-v5") >= 0);
   assert.ok(scripts.indexOf("/static/js/tts.js?v=walking-audio-v5") < scripts.length - 1);
   assert.ok(scripts.includes("/static/js/guidance.js?v=walking-audio-v5"));
