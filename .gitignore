@@ -13,3 +13,4 @@ check_output/
 workbench/
 .agents/
 AGENTS.md
+.vscode
