@@ -223,10 +223,28 @@ WSL 안에서 서버를 켜도 Windows 브라우저에서 http://127.0.0.1:8000 
 
 ### 5-2. 가중치 파일 넣기
 
-```bash
-cp ~/내학습폴더/runs/detect/train/weights/best.pt backend/models/traffic/
+**`git clone`이나 `git pull`로는 모델 가중치가 다운로드되지 않습니다.** `backend/models/`의 가중치는 Git 관리 대상에서 제외되어 있습니다. 저장소에 가중치 다운로드 링크는 없으므로, 모델 공유자에게 드라이브 등의 공유 링크나 파일을 별도로 받아야 합니다.
+
+현재 신호등 모델을 실행하려면 아래 **두 파일을 모두** 받아 저장소 루트 기준으로 배치하세요. `classifier/` 폴더가 없으면 직접 만듭니다.
+
+```text
+backend/models/traffic/
+├── best_YOLO_v2.pt              # 신호등·횡단보도 검출
+└── classifier/
+    └── best_MobileNet.pt        # 신호등 색상 분류
 ```
 
+예를 들어 두 파일을 `~/Downloads/`에 다운로드했다면 WSL/Linux에서 다음과 같이 복사합니다.
+
+```bash
+mkdir -p backend/models/traffic/classifier
+cp ~/Downloads/best_YOLO_v2.pt backend/models/traffic/
+cp ~/Downloads/best_MobileNet.pt backend/models/traffic/classifier/
+```
+
+Windows에서도 탐색기로 같은 폴더 구조에 파일을 넣으면 됩니다. `best_MobileNet.pt`는 반드시 `classifier/` 하위 폴더에 해당 이름으로 넣어야 합니다. 이 파일이 없으면 YOLO가 모델 목록에 보여도 테스트 시작 시 로딩에 실패합니다. 분류기 파일은 별도의 선택 항목으로 표시되지 않고, 선택한 YOLO 모델과 함께 로딩됩니다.
+
+- 현재 신호등 파이프라인은 Ultralytics YOLO `.pt` 검출 가중치를 사용합니다. `best_YOLO_v2.pt`가 있으면 화면에서 기본으로 선택됩니다.
 - 확장자가 `.pt` `.pth` `.onnx` `.engine` 인 파일은 자동으로 인식되어 화면의 모델 목록에 **파일 이름 그대로** 뜹니다. 서버를 재시작할 필요 없이 휴대폰에서 새로고침하면 됩니다.
 - **가중치를 바꿔 비교하려면 파일을 여러 개 넣으세요.** `best_v1.pt`, `best_v2_aug.pt` 처럼 이름으로 구분하면 각각 선택지가 되고, 어떤 파일로 찍은 기록인지 세션 요약에 파일 이름과 해시가 남습니다.
 - 파일 이름에는 영문, 숫자, `-`, `_` 만 쓰는 것을 권장합니다.
@@ -234,8 +252,9 @@ cp ~/내학습폴더/runs/detect/train/weights/best.pt backend/models/traffic/
 
 ```bash
 .venv/bin/python scripts/check_model.py --list
-# O  traffic-best                 신호등 · best.pt   [backend/models/traffic/best.pt]
 ```
+
+목록에서 `best_YOLO_v2.pt`가 인식되는지 확인하세요. 목록 조회는 분류기 로딩까지 검사하지 않으므로, 두 파일을 배치한 뒤 앱에서 신호등 모델을 선택하고 테스트를 시작해 로딩도 확인합니다.
 
 ### 5-3. 추론 코드 넣기
 
