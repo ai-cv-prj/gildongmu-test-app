@@ -1,0 +1,20 @@
+{
+  "repository": "gildongmu-integration",
+  "source_revision": "ba9281b498537962a9c401d6e10f12c869cda433",
+  "sha256": {
+    "src/risk.py": "696d70e1f01f6ff9994a7dacd3810a4d58ec618af4b77414227580ec7433bdd5",
+    "src/risk_config.py": "19ff2b89b347db0ce47e6de60964eefc2d0f6c5c61a2b148a02c780d4083a487",
+    "src/risk_geometry.py": "f61651c6daa05f965979d26a90f0bfdaa2b57c11cd93df602ab2a46f09eb2579",
+    "src/risk_motion.py": "4624b846dcd4b60255d8bbcb8e5ee614405bec33076c93e545bedd3b1447b120",
+    "src/risk_proximity.py": "18bdb23415bf8086e44c8c5c8613035db2c3124046cf2aacdf3373a4aec18182",
+    "src/alert_policy.py": "53f09777ef9ed1623fe5638893d25a8591e7690c73265bf2652dc31be16db907",
+    "src/path_roi.py": "ad7c0611cb870672796036d54185b024fc0eef8ef1048c1c7a84ee05a50fabc3",
+    "src/roi_recalibration.py": "7d97be54022d7ef821322e075d1577af04b38699207b4913d6d55a1a353dd0c3",
+    "src/ground_extent.py": "5b18d97fab54791f24f38d39ee240e0a47ad1e15ef6d377cf79a37967e054d99",
+    "src/surface_risk.py": "c33a6841e0d865184f871a120d4f6a9c0b58e4b2c3619e39b4710cc4a168b62a",
+    "src/warning_groups.py": "3481c70063c920363963e63087b93b74c99008fbf2205a1fc40c1b728dbd376c",
+    "src/tracking.py": "6a6416efe2c605acf6014741d32a873096ca0a7a98e0e848b6804bfe4c9330cc",
+    "src/risk_visualization.py": "c0878c1359f12fb4a65c37990ac02021666b00297d5c7c3bdf9c76a1aac7b6c1",
+    "configs/inference.yaml": "38181155e7971de54bc7c49ddfb743215ef6270d391b679d565f1a103fb17b1d"
+  }
+}
