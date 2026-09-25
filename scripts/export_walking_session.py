@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from backend.app.services.walking_export import WalkingExporter, read_status
+from backend.app.services.walking.walking_export import WalkingExporter, read_status
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)

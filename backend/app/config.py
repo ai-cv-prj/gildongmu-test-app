@@ -36,8 +36,8 @@ class Settings:
     min_free_disk_gb: float = field(default_factory=lambda: float(os.getenv("MIN_FREE_DISK_GB", "2")))
 
     walking_risk_enabled: bool = field(default_factory=lambda: _env_bool("WALKING_RISK_ENABLED", True))
-    walking_risk_config: Path = field(default_factory=lambda: _resolve(os.getenv("WALKING_RISK_CONFIG", "backend/config/walking_risk.yaml")))
-    walking_mask_weights: Path = field(default_factory=lambda: _resolve(os.getenv("WALKING_MASK_WEIGHTS", "backend/models/walking_aux/mask2former")))
+    walking_risk_config: Path = field(default_factory=lambda: _resolve(os.getenv("WALKING_RISK_CONFIG", "config/walking_risk.yaml")))
+    walking_mask_weights: Path = field(default_factory=lambda: _resolve(os.getenv("WALKING_MASK_WEIGHTS", "backend/models/walking/mask2former_w")))
     walking_precision: str = field(default_factory=lambda: os.getenv("WALKING_PRECISION", "fp32"))
     walking_font_path: str = field(default_factory=lambda: os.getenv("WALKING_FONT_PATH", ""))
     walking_export_enabled: bool = True

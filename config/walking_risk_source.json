@@ -1,0 +1,30 @@
+{
+  "repository": "gildongmu-integration",
+  "source_revision": "81c4d640c3b673e487d86a1dabdf1d8b03c54572",
+  "sha256": {
+    "src/risk.py": "6ae9f04332d9bead46242bf10bca24289acb829c585fd5b5d5499a714991d3a2",
+    "src/risk_config.py": "565fd6a5447eb9884cc441a4d8ee47ae6e39a6fb3de7fc8efe909fe614977021",
+    "src/risk_geometry.py": "d313590d8eec8ddb6302ed85131a8c987eb2ee1c248e683060855ff87b260af0",
+    "src/risk_motion.py": "4624b846dcd4b60255d8bbcb8e5ee614405bec33076c93e545bedd3b1447b120",
+    "src/risk_proximity.py": "18bdb23415bf8086e44c8c5c8613035db2c3124046cf2aacdf3373a4aec18182",
+    "src/alert_policy.py": "53f09777ef9ed1623fe5638893d25a8591e7690c73265bf2652dc31be16db907",
+    "src/path_roi.py": "c292672d70d71f0c06b81c52bbf99fb882f460c576ebf98a9da067b6403a8d6b",
+    "src/roi_recalibration.py": "be40a8c281f9da1d59d730a7a6057c057e95f1693b438613df3191ab827acd0f",
+    "src/ground_extent.py": "9b3d3e3f0056a0959e921d4b841f5aba572209d76a89df082e45deb277164cec",
+    "src/surface_risk.py": "babf2125679a539d0c67696f15ee2dd6b6fd728b1610d8656d503446d5334dff",
+    "src/warning_groups.py": "3481c70063c920363963e63087b93b74c99008fbf2205a1fc40c1b728dbd376c",
+    "src/tracking.py": "6a6416efe2c605acf6014741d32a873096ca0a7a98e0e848b6804bfe4c9330cc",
+    "src/risk_visualization.py": "518af13f83919b6d86cb841fefc5033bbc7e4d4771c698b7ebd8ae8424f005e9",
+    "configs/inference.yaml": "5024449943d65c4ac0990c75cbca78b1f1dafe777447980269b021b20ca58c4d",
+    "src/hazard_labels.py": "cde9a31661e444e1fc998d8c2b454c0b5699e871ccb779575c219cd3f012ea94",
+    "src/warning_summary.py": "e2f639c09b76d14c8b39ddd90e5def9bfc3ca4f31e2fe16985fd75be12e50de1",
+    "src/camera_view.py": "b3922e60e03fff7ea9ce3ffd5458af29a982237e046f0652a72204357cbe5101"
+  },
+  "port_adaptations": {
+    "imports": "src imports use the test-app risk package relative imports",
+    "response": "walking.response translates the engine selection into Korean",
+    "visualization": "test-app retains its Korean warning overlay and adopts conservative detection display labels",
+    "clock": "the app treats 0.5-2.0 second gaps as motion-invalid and resets at gaps above 2.0 seconds",
+    "camera_view": "camera_view state and transition events enter the Korean response; live/export overlays hide untrusted boxes and ROI; TTS integration remains separate"
+  }
+}

@@ -200,7 +200,7 @@ class SessionService:
             raise SessionError(415, "unsupported_media_type", f"JPEG 만 허용합니다: {content_type}")
 
         if getattr(active.pipeline, "risk_enabled", False):
-            from .walking_frames import process_walking_frame
+            from .walking.walking_frames import process_walking_frame
             return process_walking_frame(self, active, image_bytes, frame_id, captured_at_ms,
                                          client_sent_at_ms, received, t0)
 
@@ -383,12 +383,12 @@ class SessionService:
     def _exporter(self):
         with self._export_lock:
             if self._walking_exporter is None:
-                from .walking_export import WalkingExporter
+                from .walking.walking_export import WalkingExporter
                 self._walking_exporter = WalkingExporter(self.settings.walking_font_path)
             return self._walking_exporter
 
     def _export_status(self, session_id):
-        from .walking_export import read_status
+        from .walking.walking_export import read_status
         return read_status(self.storage.session_dir(session_id))
 
     def retry_export(self, session_id):

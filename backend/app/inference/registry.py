@@ -19,8 +19,8 @@ from typing import Any, Callable
 from .base import InferencePipeline, ModelSpec
 from .bus import BusPipeline
 from .mock import MockPipeline
-from .traffic import TrafficPipeline
-from .walking import WalkingPipeline
+from .traffic.pipeline import TrafficPipeline
+from .walking.pipeline import WalkingPipeline
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class PipelineRegistry:
 
     # ---- 목록: 호출할 때마다 폴더를 다시 읽으므로 가중치를 넣고 새로고침하면 바로 보인다 ----
     def _real_specs(self, mode: str) -> list[ModelSpec]:
-        """모드별 주 모델을 등록한다. walking_aux는 독립 선택 모델이 아니다."""
+        """모드별 주 모델을 등록한다. 보행 보조 모델 폴더는 독립 선택 모델이 아니다."""
         folder = self.model_dir / mode
         files = sorted(p for p in folder.glob("*") if p.is_file() and p.suffix.lower() in WEIGHT_EXTS) if folder.exists() else []
         specs = [

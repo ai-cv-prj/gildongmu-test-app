@@ -41,7 +41,7 @@ def walking_record(session: Path, frame_id: int, result: dict) -> bool:
 def render_walking(session: Path, frame: np.ndarray, frame_id: int) -> np.ndarray:
     """마스크와 ROI·경고를 결과 영상과 같은 방식으로 합성한다."""
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from backend.app.inference.walking_render import render_frame
+    from backend.app.inference.walking.visualization.render import render_frame
 
     record_path = session / "risk" / f"{frame_id:08d}.json"
     record = json.loads(record_path.read_text(encoding="utf-8")) if record_path.is_file() else {"error": "missing risk record"}

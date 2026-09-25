@@ -173,7 +173,7 @@ def main() -> int:
     out_dir.mkdir(exist_ok=True)
     out = out_dir / f"{args.mode}_{args.image.stem}.jpg"
     if "_walking_record" in result:
-        from backend.app.inference.walking_render import render_frame
+        from backend.app.inference.walking.visualization.render import render_frame
         record = result["_walking_record"]
         shown = render_frame(frame, record, record["class_map"])
     else:
