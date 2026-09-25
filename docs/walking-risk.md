@@ -1,6 +1,6 @@
 # 도보 위험 판단 실행·저장 안내
 
-기존 32클래스 YOLO26n에 integration의 보도 ROI·추적·위험 판단을 연결했다. 모델 ID와 YOLO 가중치는 유지한다. 실제 도보 모델을 선택하면 YOLO와 Mask2Former를 한 번 로딩하고, 앱에서 받은 각 프레임의 마스크로 같은 프레임의 ROI와 표면 경고를 판단한다. 화면의 ‘보도 마스크 표시’를 꺼도 보도 판단은 계속된다.
+기존 32클래스 YOLO26n에 integration의 보도 ROI·추적·위험 판단을 연결했다. 모델 ID와 YOLO 가중치는 유지한다. 실제 도보 모델을 선택하면 YOLO와 Mask2Former를 한 번 로딩하고, 앱에서 받은 각 프레임의 마스크로 같은 프레임의 ROI와 표면 경고를 판단한다. 화면의 ‘보도 마스크 표시’를 꺼도 보도 판단은 계속된다. 아래의 테스트 수치와 지연 측정은 당시 기록이며 현재 코드의 재검증 결과를 뜻하지 않는다.
 
 ## Python 3.12 환경
 
@@ -41,7 +41,7 @@ backend/models/walking/mask2former_w/model.safetensors
 | WALKING_PRECISION | fp32. fp16은 CUDA에서 Mask2Former autocast 사용 |
 | WALKING_FONT_PATH | 한글 TTF/TTC 경로. 비어 있으면 Linux Noto CJK 또는 Windows/WSL 맑은 고딕 탐색 |
 
-설정은 서버 재시작 후 적용한다. `config/walking_risk.yaml`의 `risk`에는 위험 판단 규칙만 두고, 켜기/끄기는 `.env`의 `WALKING_RISK_ENABLED`로 관리한다. 실제 보행 모델의 기본 YOLO confidence는 `config/walking_risk.yaml`의 `yolo.conf`에서 읽는다. 휴대폰의 보행 모드는 세션 요청에 confidence를 넣지 않으며, API 요청에서 confidence를 명시하면 요청값을 우선한다. 신호등 기본값은 0.25, 버스는 0.4다. 보행 Mock은 YOLO를 실행하지 않고 공통 세션 기본값 0.4를 사용한다.
+설정은 서버 재시작 후 적용한다. `config/walking_risk.yaml`의 `risk`에는 위험 판단 규칙만 두고, 켜기/끄기는 `.env`의 `WALKING_RISK_ENABLED`로 관리한다. 위험 판단이 켜진 실제 보행 모델의 기본 YOLO confidence는 `config/walking_risk.yaml`의 `yolo.conf`에서 읽는다. 휴대폰의 보행 모드는 세션 요청에 confidence를 넣지 않으며, API 요청에서 confidence를 명시하면 요청값을 우선한다. 신호등 기본값은 0.25, 버스는 0.4다. 보행 Mock은 YOLO를 실행하지 않고 공통 세션 기본값 0.4를 사용한다.
 도보 전송 기본값은 긴 변 640px·최대 10FPS이며 `backend/static/js/app.js`의 `SETTINGS`에서 관리한다. 나머지 YOLO 조건은 imgsz 640, nms=None, iou 0.7, max_det 300, rect=True다. 위험 임계값과 추적 설정은 integration 프로파일을 그대로 이식했다. 모델의 전체 원본 입력을 ROI로 잘라내지 않는다.
 
 FP32가 기본이다. 앱 실측에서 통신·저장 포함 지연이 목표를 넘을 때 FP16 또는 마스크 갱신 주기를 별도로 검토한다. 현재 구현은 오래된 마스크를 새 관측처럼 재사용하지 않는다.
@@ -85,31 +85,31 @@ manifest의 export_status_file과 frame_mapping_file이 출력 상태/대응 파
 - 오프라인 재생성: `python scripts/export_walking_session.py <종료된 세션 폴더>`.
 - JPEG 검토: `python scripts/visualize_session.py <세션 폴더>`. 보행 위험 기록이 있으면 같은 렌더러를 사용한다.
 
-## 검증 범위
+## 이전 검증 기록
 
 Python 3.14 API/위험/저장/영상 회귀, 3.12 위험 회귀와 실제 모델 정합·영상 출력, JS 캔버스 표시·오래된 콜백·회전·마스크 토글을 검증했다. 신호등 소스와 신호 표시 분기를 바꾸지 않았다.
 
 RTX 5080 Laptop GPU, 실제 저장 프레임 12장, FP32에서 초기화 이후 로컬 HTTP 처리 평균 약 103ms, p95 약 113ms였다. 첫 프레임 추론에는 약 1.15초의 초기화 비용이 있었다. 이 수치는 휴대폰 JPEG 생성·무선 네트워크·터널 지연을 포함하지 않으며, 이번 위험 정책 이식 전의 측정값이다. 새 정책의 현장 경고 선행 시간과 휴대폰 실시간 5fps 달성 여부는 실제 연결에서 별도로 확인해야 한다.
 
-## main 통합 후 바뀐 값 (2026-09-23)
+## 현재 앱 설정을 정한 기록 (2026-09-23)
 
 `main`의 실시간 지연 개선·탐지 영상 자동 저장·신호등 음성 안내와 합치면서 아래를 정리했다.
 프로젝트 전체 실행 방법은 README에, 보행 위험 판단의 세부 설정은 이 문서에 기록한다.
 
 | 항목 | 정한 값 | 이유 |
 | --- | --- | --- |
-| 전송 해상도 | 긴 변 640px (main 공통값) | YOLO 입력이 640, 보도 마스크 입력이 384로 고정이라 960 업로드는 판단에 기여하지 않는다 |
-| 전송 상한 | 10FPS (main 공통값) | 0.6초 운동 이력의 표본이 늘고 프레임 간 카메라 이동량이 줄어 TTC·측방 진입 판단에 유리하다 |
-| 검출 신뢰도 | `config/walking_risk.yaml`의 `yolo.conf` | integration 검토 당시 0.25였다. 값을 올리면 검출이 줄어 경고 미발생이 늘어난다 |
+| 전송 해상도 | 긴 변 640px (현재 앱 기본값) | YOLO 입력이 640, 보도 마스크 입력이 384로 고정이라 960 업로드는 판단에 기여하지 않는다 |
+| 전송 상한 | 10FPS (현재 앱 기본값) | 0.6초 운동 이력의 표본이 늘고 프레임 간 카메라 이동량이 줄어 TTC·측방 진입 판단에 유리하다 |
+| 검출 신뢰도 | `config/walking_risk.yaml`의 `yolo.conf` (현재 0.25) | 값을 올리면 검출이 줄어 경고 미발생이 늘어난다 |
 | 마스크 전송 | `mask_rle` 우선, `mask_png` 대체 | main의 표시 지연 개선을 유지한다 |
 | 결과 영상 | 보행 위험 세션은 `result_visualized.mp4`만 생성 | 고정 속도 영상(`annotated/results.mp4`)은 촬영 간격을 재현하지 못한다. 보행 세션의 `video_status`는 `walking_export`로 남는다 |
 
-640px에서 볼라드·연석처럼 작은 장애물의 검출이 어떻게 달라지는지는 아직 실촬영으로 확인하지 않았다.
-지금까지의 지연·정합 측정은 모두 960px 프레임에서 얻은 값이다.
+이 문서에는 640px에서 볼라드·연석처럼 작은 장애물의 검출 변화를 실촬영으로 확인한 결과가 없다.
+위의 지연·정합 측정은 당시 960px 프레임에서 얻은 값이다.
 
 
 ## 촬영 불가 상태 (2026-09-23)
 
 `risk.camera_view_guard_enabled=true`로 integration의 영상 기반 촬영 상태 판정을 사용한다. 바닥 위주의 화면과 화면 대부분을 차지하는 비정상 검출이 함께 나타나거나 렌즈 가림·심한 화질 저하가 지속되면 `camera_view.status=unavailable`이 된다. 이때 원본 검출은 기록하되 새 객체별 위험 경고와 ROI·검출 박스는 라이브 화면과 결과 영상에서 숨기고 “주의 · 촬영 불가 · 카메라를 전방으로 들어 주세요”를 표시한다. 이미 확인된 위험은 최대 0.8초 동안 출처를 명시해 유지한다. 시야가 읽히고 카메라 움직임이 0.35초 안정되면 자동으로 복구하며 추적·ROI 상태를 다시 시작한다. 버튼 조작은 필요하지 않다.
 
-API `event.camera_view`에는 상태·원인·증거가, `event.risk_events`에는 상태 전환이 기록된다. 촬영 불가 중 검출의 기하 위험 원본은 `detections[].extra.untrusted_risk_level`로 남긴다. 향후 도보 TTS PR을 도입할 때는 매 프레임 문구가 아닌 상태 전환 이벤트를 사용해 중복 재생을 막고 이전 긴급 위험보다 낮은 우선순위로 안내한다. 현재 음성 구현은 변경하지 않았다. 영상만으로 절대 휴대폰 각도를 확인할 수 없으므로 이 상태를 전방 주시의 증명으로 사용하지 않는다.
+API `event.camera_view`에는 상태·원인·증거가, `event.risk_events`에는 상태 전환이 기록된다. 촬영 불가 중 검출의 기하 위험 원본은 `detections[].extra.untrusted_risk_level`로 남긴다. 현재 도보 음성 안내는 브라우저의 `guidance.js`가 `walking_warning` 중 `level=danger`와 `voice_category`가 있는 이벤트만 읽어 사람·차량·장애물 음원을 재생한다. 같은 이벤트·분류의 안내는 5초 안에 반복하지 않으며, 촬영 불가 상태 자체를 별도 음성으로 안내하지 않는다. 영상만으로 절대 휴대폰 각도를 확인할 수 없으므로 이 상태를 전방 주시의 증명으로 사용하지 않는다.
