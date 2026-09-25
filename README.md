@@ -125,13 +125,9 @@ https://random-words-here.trycloudflare.com
 
 테스트 중에는 기능과 모델을 바꿀 수 없습니다. 바꾸려면 종료한 뒤 다시 시작합니다. 화면을 끄거나 다른 앱으로 넘어가면 전송이 일시정지되고, 돌아오면 이어집니다.
 
-신호등 모드에서는 검출한 신호등을 표시하고, 최종 선택된 신호등에 `안내 대상` 문구를 붙입니다. 횡단보도는 내부적으로 인식해 신호등 선택에 사용하지만 화면의 박스·검출 목록·진단 문구에는 표시하지 않습니다. `안내 대상 선택 불가`는 검출 결과가 있어도 안내할 신호등을 정하지 못했다는 뜻입니다.
+신호등 모드에서는 선택된 신호등에 `안내 대상`을 표시하고 한국어 음성으로 안내합니다. 소리는 테스트 전·중·후에 켜거나 끌 수 있으며, 테스트 전 `음성 확인`도 가능합니다. 선택·추적 기준과 화면 표시는 [신호등 모듈 문서](docs/traffic-signal.md)를 참고하세요.
 
-신호등 음성은 **테스트 전·중·후 언제든 `음성 끄기` / `음성 켜기`로 선택할 수 있습니다.** 기본값은 켜기이며 선택은 브라우저에 저장됩니다. 켜둔 상태에서 테스트를 시작하면 자동 안내하고, 꺼두면 시작 음성도 재생하지 않습니다. 테스트 전에는 `음성 확인`으로 소리만 확인할 수 있습니다. 앱에 포함된 한국어 MP3 음원을 재생하며 Mock에서는 “모의 신호”를 붙입니다. 화면을 숨기거나 카메라·테스트가 종료되면 안내도 종료됩니다. 재생 상태와 오류는 안내 패널에 표시됩니다.
-
-박스 색상·결과 필드, 선택·추적·색상 분류 로직과 설정값, 검증 결과·한계는 [신호등 모듈 문서](docs/traffic-signal.md)를 참고하세요.
-
-도보 장애물 모드의 위험 판단 기준과 설정값, 세션 저장 파일과 결과 영상은 [도보 위험 판단 문서](docs/walking-risk.md)를 참고하세요.
+도보 장애물의 위험 판단 기준·설정·결과 영상은 [도보 위험 판단 문서](docs/walking-risk.md)에 정리돼 있습니다.
 
 ### 화면에 나오는 숫자
 
@@ -169,16 +165,7 @@ Windows 에서 직접 명령을 칠 때는 `--port 8001` 과 `cloudflared tunnel
 
 ### 4-2. 한 대의 PC(연구실 GPU 서버 등)를 여러 명이 같이 쓰는 경우
 
-이때만 포트가 실제로 겹칩니다. 사람마다 저장소를 따로 clone 하고 `.env` 에서 포트를 나눠 쓰세요.
-
-| 팀원 | APP_PORT |
-| --- | --- |
-| A | 8001 |
-| B | 8002 |
-| C | 8003 |
-| D | 8004 |
-
-저장소 폴더가 다르면 기록 폴더(`backend/data`)도 자동으로 분리됩니다. 다만 GPU 한 장을 여러 서버가 동시에 쓰면 추론 시간이 서로 영향을 받으므로, **속도를 재는 테스트는 한 번에 한 명만** 하세요.
+이때만 포트가 실제로 겹칩니다. 사람마다 저장소를 따로 clone 하고 `.env`의 `APP_PORT`를 8001, 8002처럼 다르게 지정하세요. 기록 폴더도 분리됩니다. GPU 한 장을 공유한다면 **속도를 재는 테스트는 한 번에 한 명만** 하세요.
 
 ### 4-3. 터널 주소는 사람마다 다르고, 공유하면 안 됩니다
 
@@ -241,12 +228,11 @@ cp ~/Downloads/best_YOLO_v2.pt backend/models/traffic/
 cp ~/Downloads/best_MobileNet.pt backend/models/traffic/classifier/
 ```
 
-Windows에서도 탐색기로 같은 폴더 구조에 파일을 넣으면 됩니다. `best_MobileNet.pt`는 반드시 `classifier/` 하위 폴더에 해당 이름으로 넣어야 합니다. 이 파일이 없으면 YOLO가 모델 목록에 보여도 테스트 시작 시 로딩에 실패합니다. 분류기 파일은 별도의 선택 항목으로 표시되지 않고, 선택한 YOLO 모델과 함께 로딩됩니다.
+Windows에서도 같은 폴더 구조에 넣습니다. `best_MobileNet.pt`가 없으면 YOLO가 목록에 보여도 테스트 시작 시 로딩에 실패합니다. 분류기는 별도 선택 항목이 아닙니다.
 
-- 현재 신호등 파이프라인은 Ultralytics YOLO `.pt` 검출 가중치를 사용합니다. `best_YOLO_v2.pt`가 있으면 화면에서 기본으로 선택됩니다.
-- 확장자가 `.pt` `.pth` `.onnx` `.engine` 인 파일은 자동으로 인식되어 화면의 모델 목록에 **파일 이름 그대로** 뜹니다. 서버를 재시작할 필요 없이 휴대폰에서 새로고침하면 됩니다.
+- 신호등 파이프라인은 YOLO `.pt` 가중치를 사용하며, `best_YOLO_v2.pt`가 있으면 기본으로 선택됩니다. 모델 목록은 휴대폰에서 새로고침하면 갱신됩니다.
+- `.pt` `.pth` `.onnx` `.engine` 파일은 목록에 표시되지만, 실제 로딩은 해당 파이프라인이 지원하는 형식이어야 합니다.
 - **가중치를 바꿔 비교하려면 파일을 여러 개 넣으세요.** `best_v1.pt`, `best_v2_aug.pt` 처럼 이름으로 구분하면 각각 선택지가 되고, 어떤 파일로 찍은 기록인지 세션 요약에 파일 이름과 해시가 남습니다.
-- 파일 이름에는 영문, 숫자, `-`, `_` 만 쓰는 것을 권장합니다.
 - 인식됐는지 확인:
 
 ```bash
@@ -379,14 +365,14 @@ backend/data/sessions/
    ├─ results.jsonl                           프레임당 한 줄의 서버 추론 결과
    ├─ client_timings.jsonl                    프레임당 한 줄의 휴대폰 지연 측정값
    ├─ realtime_overlay.webm                   테스트 종료 시 업로드하는 실시간 탐지 녹화
-   └─ annotated/results.mp4                   종료 후 생성되는 탐지 결과 영상
+   └─ annotated/results.mp4                   일반 세션의 탐지 결과 영상
 ```
 
 - **manifest.json**: 기기, 메모, 기능, 모델 ID, 가중치 파일 이름과 해시, 시작·종료 시각, 상태, 프레임 수, 실패 수, 평균·p95 처리 시간, 전송 설정, 휴대폰 브라우저 정보.
 - **frames/**: 신호등은 초당 최대 5장·긴 변 최대 960px, 나머지 기능은 초당 최대 10장·긴 변 최대 640px JPEG. 파일 번호가 프레임 번호입니다. 박스가 그려지지 않은 원본이라 다른 가중치로 다시 추론해 볼 수 있습니다.
 - **results.jsonl**: 프레임 번호, 촬영 시각, 서버 수신 시각, 이미지 크기, 검출 목록, event, 단계별 처리 시간, 이미지 경로. 실패한 프레임은 `error` 에 원인이 남습니다.
-- **annotated/results.mp4**: 앱에서 테스트 종료를 누르면 서버가 탐지 박스와 상태를 그린 영상을 백그라운드에서 만듭니다. 프레임 처리 중에는 영상을 인코딩하지 않습니다. 영상은 오디오 없이 `manifest.json`의 `target_fps`로 재생됩니다. `SAVE_FRAMES=false`이거나 저장된 프레임이 없으면 만들지 않습니다.
-- **video_status**: 세션 조회 API와 `manifest.json`에서 `pending`(변환 중), `ready`(완료), `failed`(실패), `no_frames`(저장된 프레임 없음)를 확인합니다. 서버가 변환 도중 재시작되면 `pending` 영상을 다시 생성합니다. 변환 실패 원인은 `manifest.json`의 `video_error`에 남습니다. 변환 중 바로 다음 테스트를 시작하면 CPU·디스크 사용이 겹칠 수 있습니다.
+- **결과 영상**: 일반 세션은 `annotated/results.mp4`, 보행 위험 세션은 `result_visualized.mp4`를 만듭니다. 보행 영상의 촬영 간격 재현과 저장물은 [도보 위험 판단 문서](docs/walking-risk.md#필수-저장물)를 참고하세요.
+- **video_status**: 일반 세션의 영상 생성 상태는 세션 조회 API와 `manifest.json`에서 `pending`·`ready`·`failed`·`no_frames`로 확인합니다.
 - **client_timings.jsonl**: 아래 표의 휴대폰 측정값. 2.5초마다 최대 25건씩 전송하며, 테스트 종료 시 마지막 기록까지 저장합니다. 새 테스트부터 생성됩니다.
 - 상태는 `running` / `completed` / `aborted` 입니다. 서버가 테스트 도중 꺼지면 다음에 켤 때 `aborted` 로 바뀌고, 그때까지 받은 프레임은 그대로 남아 있습니다.
 - **폴더가 곧 기록입니다.** 필요 없는 테스트는 폴더를 지우면 되고, 팀에 공유할 때는 폴더를 압축해 보내면 됩니다.
@@ -396,35 +382,14 @@ backend/data/sessions/
 
 `results.jsonl`과 `client_timings.jsonl`을 같은 `session_id`, `frame_id`로 연결합니다. 시간 단위는 ms입니다.
 
-| 파일 / 주요 항목 | 기록 내용 |
+| 항목 | 의미 |
 | --- | --- |
-| 서버 `timing.decode_ms`, `inference_ms`, `save_ms`, `server_ms` | JPEG 디코딩, 모델 추론, 원본 프레임 저장, 이 구간의 서버 처리 시간 (기존) |
-| 클라이언트 `capture_ms`, `jpeg_bytes`, `capture_backend` | 캡처·크기 조정·JPEG 생성 시간, 전송 이미지 용량, 실제 경로(`worker_video_frame`: VideoFrame 직접 전달, `worker`: ImageBitmap 전달, `canvas`: 기존 경로) |
-| `request_ms` | 전송 호출부터 응답 본문 수신·JSON 해석까지. 실패 시에는 오류가 발생할 때까지의 시간 |
-| `response_to_overlay_ms` | 응답 처리 후 RLE 복원 또는 PNG 디코딩과 canvas 그리기가 끝날 때까지 |
-| `capture_to_overlay_ms` | **캡처 시작부터 해당 결과를 canvas에 그릴 때까지의 전체 지연** |
-| `capture_interval_ms`, `overlay_interval_ms` | 캡처 간격과 결과 그리기 갱신 간격. 평균 갱신 FPS는 `1000 / 평균 overlay_interval_ms` |
-| `previous_overlay_age_ms` | 새 결과를 그릴 때, 직전 결과의 원본 캡처로부터 흐른 시간. 오래된 마스크가 유지되는 정도를 파악 |
-| `throttle_wait_ms`, `retry_wait_ms` | 설정된 FPS 상한을 맞추기 위한 실제 대기 시간과 오류 후 재시도 대기 시간 |
-| `recording_active`, `visibility` | 해당 프레임 처리 중 녹화 여부와 페이지 표시 상태 |
-| `status`, `http_status`, `error_code`, `overlay_status` | 성공·오류·종료로 취소, HTTP 상태, 오류 종류, 그리기 완료·취소·실패·생략 |
-| `captured_at_ms`, `capture_started_ms`, `request_started_ms`, `response_received_ms`, `overlay_drawn_ms` | 캡처 시각과 단계별 브라우저 시각. `captured_at_ms`만 Unix 시각이며 나머지는 같은 페이지의 `performance.now()` 기준 |
-| `schema_version`, `session_id`, `frame_id`, `batch_id`, `dropped_records` | 형식 버전, 기록 연결 키, 재전송 묶음 ID, 브라우저 버퍼 초과로 누락된 누적 건수 |
+| `inference_ms`, `server_ms` | 모델 추론과 서버의 디코딩·추론·원본 저장 시간 |
+| `request_ms` | 전송 호출부터 응답 처리까지의 시간. 서버 처리도 포함 |
+| `capture_to_overlay_ms` | 캡처 시작부터 해당 결과를 화면에 그리기까지의 전체 지연 |
+| `overlay_interval_ms`, `previous_overlay_age_ms` | 화면 갱신 간격과 직전 결과의 나이 |
 
-- 전체 지연은 `capture_to_overlay_ms`로 직접 측정하며 캡처·요청 준비·왕복·그리기를 포함합니다. 서버 시간은 `request_ms`에 이미 포함되므로 다시 더하지 않습니다. 대기 시간과 갱신 간격도 전체 지연에 더하지 않습니다.
-- 폰과 서버의 시계를 서로 빼지 않습니다. `request_ms - server_ms`에는 통신 외에 서버 대기·결과 저장·직렬화·브라우저 처리도 들어가므로 **순수 네트워크 지연이 아닙니다**.
-- 그리기 시각은 canvas 명령 완료 기준입니다. 카메라 센서·브라우저 영상 버퍼·디스플레이 출력까지의 정확한 물리적 지연은 측정하지 못합니다. 미측정 항목은 `null`이며, 오류/취소 프레임은 FPS·평균 지연 계산에서 구별해야 합니다.
-- 저장 실패 시 화면에 알리고 같은 묶음을 재시도합니다. 응답만 유실되면 같은 줄이 중복 저장될 수 있으므로 분석 시 `(session_id, frame_id)`로 중복을 제거합니다. 오프라인 대기열은 최대 500건(+전송 중 25건)이며 초과 누락은 경고와 `dropped_records`에 남습니다.
-- **테스트 종료 후 저장 완료를 확인하고 페이지를 닫으세요.** 강제 종료 시 아직 업로드하지 않은 로그는 유실될 수 있습니다. 로그 업로드 자체에도 소량의 통신·저장 비용이 있습니다.
-
-현재 브라우저 버전은 `traffic-audio-v13`이며 `manifest.json`의 `client.app_version`에 기록됩니다. 지연 로그 수집·전송은 `api.js`의 `GApi.createTimings()`가 담당합니다.
-
-- 캡처는 VideoFrame → Worker를 우선 사용하고, 생성 미지원 시 ImageBitmap → Worker, Worker 실패 시 기존 canvas 경로로 전환합니다.
-- 보행 마스크는 `event.mask_rle`로 픽셀을 복원합니다. 라벨·해상도·경계·색상·투명도는 그대로이며, 4096구간 초과 마스크와 이전 PNG 결과는 `mask_png` 경로로 표시합니다.
-- `mask_rle`의 필드는 `width`, `height`, `data`입니다. `data`는 little-endian uint32 배열의 Base64 문자열로, 하위 2비트는 색(0=투명, 1=초록, 2=핑크), 나머지는 연속 픽셀 수입니다. 행 우선으로 복원하며 RGBA는 `(0,0,0,0)`, `(0,255,0,140)`, `(255,105,180,140)`입니다. `results.jsonl`에도 같은 데이터가 저장됩니다.
-- 전송은 신호등 최대 5FPS·960px, 나머지 기능 최대 10FPS·640px이며 JPEG 품질은 모두 0.8입니다. 요청은 한 번에 한 장만 처리합니다. 모델 가중치·연산 정밀도, 원본 저장, 실시간 탐지 녹화(합성 30FPS)를 유지하고 영상 자체를 늦추지는 않습니다.
-
-변경 적용 시 테스트 종료 → 서버 재시작 → **폰 페이지 새로고침**을 하세요. RLE 지원 전 프런트엔드는 새 마스크를 표시하지 못합니다. 적용 여부는 `client.app_version`, `settings.target_fps`, `capture_backend`, `event.mask_rle`/`mask_png`로, 실제 지연은 위 표의 전체 지연·갱신 간격·이전 마스크 나이로 확인합니다.
+`request_ms - server_ms`는 순수 네트워크 시간이 아닙니다. **테스트 종료 후 저장 완료를 확인하고 페이지를 닫으세요.** 강제 종료하면 아직 전송하지 않은 지연 로그가 유실될 수 있습니다.
 
 ### 프레임별 결과 시각화
 
@@ -434,28 +399,7 @@ backend/data/sessions/
 .venv/bin/python scripts/visualize_session.py backend/data/sessions/<세션 ID>
 ```
 
-여러 세션을 순서대로 하나의 영상으로 이어 붙이려면 `--combine`을 사용합니다. 세션 시작 부분에는 구분 화면이 들어갑니다.
-
-```bash
-.venv/bin/python scripts/visualize_session.py backend/data/sessions/20260918_*_traffic --combine backend/data/sessions/20260918_results.mp4
-```
-
-이 스크립트로 내보낸 영상에 그리는 박스는 `results.jsonl`의 `detections` 목록입니다. 새 신호등 테스트 결과에는 횡단보도 박스·신뢰도·실패 사유도 저장되어 내보낸 영상에 표시됩니다. 실시간 화면과 그 화면을 합성한 WebM 녹화에서는 횡단보도 박스를 숨깁니다. 횡단보도 개수만 저장한 과거 기록은 원본 이미지를 재추론해야 횡단보도 박스를 볼 수 있습니다.
-
-결과 파일 읽기 예시:
-
-```python
-import json
-rows = [json.loads(l) for l in open("backend/data/sessions/<세션>/results.jsonl", encoding="utf-8")]
-ok = [r for r in rows if r["error"] is None]
-print(len(ok), "frames,", sum(r["timing"]["inference_ms"] for r in ok) / len(ok), "ms 평균 추론")
-```
-
-프레임을 고정 10FPS 영상으로 이어붙이기 (신호등 기본 설정으로 촬영했다면 `-framerate 5`를 사용합니다. 실제 촬영 간격과 마스크 지연은 재현하지 않습니다. 실시간 기록은 `realtime_overlay.webm`을 보세요):
-
-```bash
-ffmpeg -framerate 10 -pattern_type glob -i 'backend/data/sessions/<세션>/frames/*.jpg' -pix_fmt yuv420p out.mp4
-```
+여러 세션을 하나의 영상으로 이어 붙일 때는 `--combine` 옵션을 사용합니다. 출력 박스는 `results.jsonl`의 검출 목록을 따릅니다. 신호등의 횡단보도 박스는 내보낸 영상에만 표시되며, 실시간 화면에서는 숨깁니다.
 
 앱 안에 기록 조회 화면은 없습니다. 필요하면 API 로 볼 수 있습니다: `GET /api/sessions`, `GET /api/sessions/{id}`, `GET /api/sessions/{id}/results`, `GET /api/sessions/{id}/frames/{frame_id}.jpg`, `GET /api/sessions/{id}/video`(영상 다운로드). 전체 API 문서는 서버를 켠 상태에서 http://127.0.0.1:8000/docs 입니다.
 
@@ -515,61 +459,24 @@ ffmpeg -framerate 10 -pattern_type glob -i 'backend/data/sessions/<세션>/frame
 ### 코드 구조
 
 ```text
-config/                             보행 위험 판단 설정과 원본 출처 기록
-backend/app/main.py                  앱 생성, 라우터, 정적 파일
-backend/app/api/                     health, models, sessions(프레임·녹화·지연 로그·세션 관리)
-backend/app/inference/
-  ├─ base.py                         파이프라인 인터페이스, normalize_box
-  ├─ registry.py                     가중치 폴더 탐색, 모델 1회 로딩
-  ├─ mock.py                         가짜 박스 모델
-  ├─ bus.py                          버스 파이프라인
-  ├─ traffic/
-  │   ├─ __init__.py                  신호등 패키지 설명
-  │   ├─ pipeline.py                  신호등 대상 선택·색상 분류
-  │   ├─ geometry.py                  횡단보도 줄무늬 기반 방향 추정
-  │   ├─ motion.py                    횡단보도 후보의 카메라 이동 보정
-  │   └─ tracker.py                   세션별 BoT-SORT 신호등 추적
-  └─ walking/
-      ├─ __init__.py                  도보 장애물 패키지 설명
-      ├─ pipeline.py                  도보 장애물 추론 파이프라인
-      ├─ clock.py                     프레임 시각·간격 검증
-      ├─ response.py                  위험 판단을 화면·음성 응답으로 변환
-      ├─ sidewalk.py                  보도 영역 분할 모델 연결
-      ├─ risk/                       경로·위험도 판단, 추적, 경고 정책
-      └─ visualization/
-          ├─ __init__.py              시각화 패키지 설명
-          ├─ render.py                결과 영상용 시각화 합성
-          ├─ risk_visualization.py    위험도·경고·검사 영역 표시
-          └─ scene_visualization.py   클래스별 객체 박스·분할 마스크 표시
-backend/app/services/                공통 세션·저장·영상 처리
-  ├─ session_service.py            세션 시작·프레임 처리·종료
-  ├─ storage_service.py            세션 기록 저장·조회
-  ├─ video_service.py              일반 세션 영상 생성
-  └─ walking/                     보행 전용 처리
-      ├─ walking_frames.py         보행 프레임 처리
-      ├─ walking_storage.py        보행 원본·위험 결과 저장
-      └─ walking_export.py         보행 결과 영상 생성
-backend/static/                      index.html, css/app.css
-  ├─ audio/ko-v1/                    한국어 안내 MP3·문구 목록
-  └─ js/
-      ├─ api.js                      서버 요청, 지연 로그 수집·묶음 전송·재시도
-      ├─ camera.js                   카메라 제어·프레임 캡처
-      ├─ capture-worker.js           별도 스레드의 크기 조정·JPEG 생성
-      ├─ overlay.js                  박스·마스크 표시
-      ├─ recorder.js                 실시간 화면 합성·녹화
-      ├─ guidance.js                 신호 상태·색상 변화·감지 공백의 안내 정책
-      ├─ tts.js                      고정 한국어 음원 재생·취소·오류 처리
-      └─ app.js                      화면 상태·세션·프레임 전송 루프
+config/                             보행 위험 판단 설정
+backend/app/
+  ├─ api/                           서버 요청 처리
+  ├─ services/                      세션·저장·영상 처리
+  │   └─ walking/                   보행 전용 저장·영상 처리
+  └─ inference/
+      ├─ base.py / registry.py / mock.py  공통 규격·모델 목록·Mock
+      ├─ traffic/                  신호등 추론·추적
+      ├─ walking/                  장애물 추론·보도 분할
+      │   ├─ risk/                 위험 판단
+      │   └─ visualization/        화면·결과 영상 표시
+      └─ bus.py                    버스 추론
+backend/static/                      휴대폰 화면·JS·음성
 backend/models/<기능>/               가중치 (Git 제외)
 backend/data/sessions/               테스트 기록 (Git 제외)
-scripts/                             run.sh, tunnel.sh, check_model.py, screenshot.py
-tests/backend/api/                  API·클라이언트 지연 로그 처리 테스트
-tests/backend/traffic/              신호등 기본값·방향·흔들림·선택·추적 테스트
-tests/backend/walking/              보행 마스크·위험 판단·영상 내보내기 테스트
-tests/frontend/                     캡처·녹화·안내·오버레이·지연 로그 테스트
-tests/frontend/helpers/             브라우저 테스트용 음원 재생 보조 코드
-docs/traffic-signal.md               신호등 동작·검증 결과·한계
-docs/walking-risk.md                 도보 위험 판단 실행·설정·저장물
+scripts/                             실행·모델 점검·결과 시각화
+tests/backend/ · tests/frontend/     서버·브라우저 테스트
+docs/                                기능별 상세 설명
 ```
 
 ### 테스트
