@@ -26,6 +26,7 @@ LABELS={"non_walkable":0,"walkable":1,"crosswalk":2}
 class SharedProfileTests(unittest.TestCase):
     def test_shipped_config_enables_only_shared_image_profile(self):
         cfg=risk_config(CFG)
+        self.assertNotIn("enabled", cfg)
         self.assertTrue(cfg["surface_risk_enabled"])
         self.assertTrue(cfg["side_proximity_enabled"])
         self.assertTrue(cfg["ttc_alerts"])

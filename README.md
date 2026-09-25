@@ -37,7 +37,7 @@ Gildongmu 모델을 **휴대폰 카메라로 실시간 테스트**하는 팀 내
 
 | 항목 | 설명 |
 | --- | --- |
-| Python 3.10 이상 | `python3 --version` 으로 확인. 모델 학습에 쓰던 버전과 맞추는 것이 안전합니다. |
+| Python 3.12 | `python3 --version` 으로 확인. 보행 위험 기능의 기준 버전입니다. |
 | Git | 코드 받기용 |
 | cloudflared | 휴대폰 접속용 HTTPS 주소를 만들어 줍니다. 계정과 로그인은 필요 없습니다. |
 | 본인 모델 가중치 | `.pt` `.pth` `.onnx` `.engine` 파일. 없으면 Mock 으로 먼저 실행해 볼 수 있습니다. |
@@ -72,14 +72,14 @@ cd gildongmu-test-app
 `run.sh` 가 처음 한 번 `.venv` 생성, 패키지 설치, `.env` 생성을 자동으로 하고 서버를 켭니다.
 
 - `python3 -m venv` 가 실패하면 `sudo apt install python3-venv` 를 먼저 실행하세요.
-- 특정 Python 을 쓰려면 `PYTHON=python3.10 ./scripts/run.sh` 처럼 지정합니다.
+- Python 3.12를 지정하려면 `PYTHON=python3.12 ./scripts/run.sh` 로 실행합니다. 기존 `.venv`가 있으면 먼저 그 환경의 버전을 확인하세요.
 
 ### Windows (PowerShell, WSL 을 쓰지 않는 경우)
 
 ```powershell
 git clone https://github.com/ai-cv-prj/gildongmu-test-app.git
 cd gildongmu-test-app
-py -3 -m venv .venv
+py -3.12 -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 copy .env.example .env
 .venv\Scripts\python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
@@ -201,27 +201,24 @@ WSL 안에서 서버를 켜도 Windows 브라우저에서 http://127.0.0.1:8000 
 
 ## 5. 본인 모델 연결하기
 
-**수정하는 파일은 본인 기능의 파일 하나**이고, 가중치는 폴더에 넣기만 하면 됩니다. API, 저장, 화면 코드는 건드리지 않습니다.
+**본인 기능의 파이프라인과 관련 모듈**을 수정하고, 가중치는 해당 폴더에 넣습니다. 신호등과 도보 장애물은 기능별 패키지로 나뉘며, 모델 연결의 시작점은 아래 파일입니다.
 
 | 기능 | 수정할 파일 | 가중치 넣는 폴더 |
 | --- | --- | --- |
-| 신호등 | `backend/app/inference/traffic.py` | `backend/models/traffic/` |
-| 도보 장애물 | `backend/app/inference/walking.py` | `backend/models/walking/` |
+| 신호등 | `backend/app/inference/traffic/pipeline.py` | `backend/models/traffic/` |
+| 도보 장애물 | `backend/app/inference/walking/pipeline.py` | `backend/models/walking/` |
 | 버스 | `backend/app/inference/bus.py` | `backend/models/bus/` |
 
 ### 5-1. 모델 패키지 설치
 
-서버와 **같은 가상환경**(`.venv`)에 설치해야 합니다. 학습할 때 쓰던 버전과 맞추세요.
+모델 패키지는 서버와 **같은 가상환경**(`.venv`)에 설치해야 합니다. `requirements.txt`에 공통 버전이 지정되어 있고, `run.sh`가 첫 실행 때 함께 설치합니다. GPU용 PyTorch 빌드는 본인 CUDA 환경에 맞게 설치하세요.
 
 ```bash
-# 예: ultralytics YOLO
-.venv/bin/pip install ultralytics
-
 # GPU 확인. True 가 나와야 GPU 로 추론합니다.
 .venv/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 ```
 
-`False` 가 나오면 CPU 용 torch 가 깔린 것입니다. https://pytorch.org/get-started/locally/ 에서 본인 GPU 와 CUDA 에 맞는 설치 명령을 확인하세요. RTX 50 시리즈는 CUDA 12.8 이상 빌드가 필요합니다. 이 패키지들은 `requirements.txt` 에 추가하지 마세요 (7장 참고).
+`False` 가 나오면 PyTorch가 GPU를 사용하지 못하는 상태입니다. https://pytorch.org/get-started/locally/ 에서 본인 GPU 와 CUDA 에 맞는 설치 명령을 확인하세요. RTX 50 시리즈는 CUDA 12.8 이상 빌드가 필요합니다. 이 저장소의 `requirements.txt`에는 `torch`, `torchvision`, `ultralytics` 버전이 지정되어 있습니다.
 
 ### 5-2. 가중치 파일 넣기
 
@@ -260,7 +257,7 @@ Windows에서도 탐색기로 같은 폴더 구조에 파일을 넣으면 됩니
 
 ### 5-3. 추론 코드 넣기
 
-본인 기능의 파일을 열어 세 군데를 채웁니다. 아래는 ultralytics YOLO 로 채운 `traffic.py` 의 완성 예시입니다. 이 예시는 표준 ultralytics API 로 작성했지만, 개발 PC 에 ultralytics 를 설치해 실행해 보지는 않았습니다. 5-4 의 점검 스크립트로 본인 환경에서 확인하세요.
+본인 기능의 파일을 열어 세 군데를 채웁니다. 아래는 ultralytics YOLO 로 채운 `traffic/pipeline.py` 의 완성 예시입니다. 이 예시는 표준 ultralytics API 로 작성했지만, 개발 PC 에 ultralytics 를 설치해 실행해 보지는 않았습니다. 5-4 의 점검 스크립트로 본인 환경에서 확인하세요.
 
 ```python
 CLASS_NAMES: dict[int, str] = {0: "red_light", 1: "green_light"}   # ① 본인 data.yaml 의 클래스 순서
@@ -315,7 +312,7 @@ class TrafficPipeline:
 | 좌표는 **0~1 정규화 xyxy** | 픽셀 좌표는 `normalize_box(x1, y1, x2, y2, w, h)` 로 변환합니다. xywh 나 중심 좌표 형식이면 먼저 xyxy 로 바꾸세요. |
 | 값은 **파이썬 기본 타입** | tensor 나 numpy 값은 `float()`, `int()` 로 변환합니다. 안 하면 저장 단계에서 오류가 납니다. |
 | `load()` 에서만 모델 로딩 | `infer()` 안에서 매번 로딩하면 프레임마다 몇 초씩 걸립니다. |
-| 신뢰도 기준은 `context.confidence` | 기본값은 신호등 0.25, 나머지 기능 0.4 입니다. |
+| 신뢰도 기준은 `context.confidence` | 기본값은 신호등 0.25, 실제 보행 모델은 `config/walking_risk.yaml`의 `yolo.conf`, 보행 Mock과 버스는 0.4입니다. |
 
 기능별 `event` 형식:
 
@@ -474,8 +471,8 @@ ffmpeg -framerate 10 -pattern_type glob -i 'backend/data/sessions/<세션>/frame
 | `.venv/`, `check_output/`, `screenshots/` | 가상환경, 점검 결과, 캡처 |
 
 - 가중치는 Git 으로 주고받지 마세요. 용량 때문에 push 가 막힙니다. 공유가 필요하면 드라이브를 쓰세요.
-- 추론 코드를 공유하고 싶으면 **본인 기능 파일 하나만** 커밋하세요 (`traffic.py` / `walking.py` / `bus.py`). 파일이 기능별로 나뉘어 있어서 서로 충돌하지 않습니다.
-- `torch`, `ultralytics` 같은 모델 패키지는 `requirements.txt` 에 넣지 마세요. 사람마다 GPU 와 버전이 달라서 다른 팀원의 설치가 깨집니다. 필요한 패키지와 버전은 본인 기능 파일 맨 위 주석에 적어 두세요.
+- 추론 코드를 공유할 때는 **본인 기능 변경에 필요한 파일을 함께** 커밋하세요 (`inference/traffic/`, `inference/walking/`, `inference/bus.py`). 관련 테스트·문서 변경도 포함하고, 공통 코드 변경은 팀과 조율하세요.
+- 공통 모델 패키지의 버전은 `requirements.txt`에서 관리합니다. GPU용 PyTorch 빌드는 각자의 CUDA 환경에 맞게 설치하세요. 기능별로 추가 패키지가 필요하면 팀과 버전을 조율하세요.
 - 공통 코드(API, 저장, 화면)를 고쳐야 할 것 같으면 먼저 팀에 이야기해 주세요.
 - 뼈대가 업데이트되면 `git pull` 후 서버를 재시작합니다. 패키지가 추가됐으면 `.venv/bin/pip install -r requirements.txt` 를 다시 실행합니다.
 
@@ -513,23 +510,45 @@ ffmpeg -framerate 10 -pattern_type glob -i 'backend/data/sessions/<세션>/frame
 | `MAX_UPLOAD_BYTES` | 2097152 | 프레임 한 장 업로드 한도 |
 | `MIN_FREE_DISK_GB` | 2 | 여유 공간이 이보다 적으면 새 테스트를 막음 |
 
-전송 기본값은 신호등 **960px·5FPS·검출 신뢰도 0.25**, 도보 장애물·버스 **640px·10FPS·검출 신뢰도 0.4**입니다. `backend/static/js/app.js`의 `SETTINGS`와 `TRAFFIC_SETTINGS`에서 관리하며, 세션에 기록한 설정을 실제 캡처·전송 루프에도 동일하게 적용합니다. JPEG 품질은 0.8, 요청 제한 시간은 5초입니다. JPEG 0.8은 인코더 품질 값이며 파일 크기를 80% 또는 0.8%로 고정하는 압축률이 아닙니다.
+전송 기본값은 신호등 **960px·5FPS·검출 신뢰도 0.25**, 도보 장애물·버스 **640px·10FPS**입니다. 실제 보행 모델의 검출 신뢰도 기본값은 `config/walking_risk.yaml`의 `yolo.conf`이며, 보행 Mock과 버스의 기본값은 0.4입니다. 촬영·전송 설정은 `backend/static/js/app.js`의 `SETTINGS`와 `TRAFFIC_SETTINGS`에서 관리합니다. 보행 모드의 휴대폰 요청은 신뢰도를 생략하고 서버가 기본값을 정합니다. JPEG 품질은 0.8, 요청 제한 시간은 5초입니다. JPEG 0.8은 인코더 품질 값이며 파일 크기를 80% 또는 0.8%로 고정하는 압축률이 아닙니다.
 
 ### 코드 구조
 
 ```text
+config/                             보행 위험 판단 설정과 원본 출처 기록
 backend/app/main.py                  앱 생성, 라우터, 정적 파일
 backend/app/api/                     health, models, sessions(프레임·녹화·지연 로그·세션 관리)
 backend/app/inference/
   ├─ base.py                         파이프라인 인터페이스, normalize_box
   ├─ registry.py                     가중치 폴더 탐색, 모델 1회 로딩
   ├─ mock.py                         가짜 박스 모델
-  ├─ traffic.py                       신호등 대상 선택·색상 분류
-  ├─ traffic_geometry.py              횡단보도 줄무늬 기반 방향 추정
-  ├─ traffic_motion.py                횡단보도 후보의 카메라 이동 보정
-  ├─ traffic_tracker.py               세션별 BoT-SORT 신호등 추적
-  └─ walking.py / bus.py              도보 장애물·버스 파이프라인
-backend/app/services/                session_service(세션·프레임 처리), storage_service(폴더·파일 저장)
+  ├─ bus.py                          버스 파이프라인
+  ├─ traffic/
+  │   ├─ __init__.py                  신호등 패키지 설명
+  │   ├─ pipeline.py                  신호등 대상 선택·색상 분류
+  │   ├─ geometry.py                  횡단보도 줄무늬 기반 방향 추정
+  │   ├─ motion.py                    횡단보도 후보의 카메라 이동 보정
+  │   └─ tracker.py                   세션별 BoT-SORT 신호등 추적
+  └─ walking/
+      ├─ __init__.py                  도보 장애물 패키지 설명
+      ├─ pipeline.py                  도보 장애물 추론 파이프라인
+      ├─ clock.py                     프레임 시각·간격 검증
+      ├─ response.py                  위험 판단을 화면·음성 응답으로 변환
+      ├─ sidewalk.py                  보도 영역 분할 모델 연결
+      ├─ risk/                       경로·위험도 판단, 추적, 경고 정책
+      └─ visualization/
+          ├─ __init__.py              시각화 패키지 설명
+          ├─ render.py                결과 영상용 시각화 합성
+          ├─ risk_visualization.py    위험도·경고·검사 영역 표시
+          └─ scene_visualization.py   클래스별 객체 박스·분할 마스크 표시
+backend/app/services/                공통 세션·저장·영상 처리
+  ├─ session_service.py            세션 시작·프레임 처리·종료
+  ├─ storage_service.py            세션 기록 저장·조회
+  ├─ video_service.py              일반 세션 영상 생성
+  └─ walking/                     보행 전용 처리
+      ├─ walking_frames.py         보행 프레임 처리
+      ├─ walking_storage.py        보행 원본·위험 결과 저장
+      └─ walking_export.py         보행 결과 영상 생성
 backend/static/                      index.html, css/app.css
   ├─ audio/ko-v1/                    한국어 안내 MP3·문구 목록
   └─ js/
@@ -544,8 +563,11 @@ backend/static/                      index.html, css/app.css
 backend/models/<기능>/               가중치 (Git 제외)
 backend/data/sessions/               테스트 기록 (Git 제외)
 scripts/                             run.sh, tunnel.sh, check_model.py, screenshot.py
-tests/                              API·마스크·캡처·녹화·지연 로그 테스트
-tests/test_traffic_*.py              신호등 기본값·방향·흔들림·선택 회귀 테스트
+tests/backend/api/                  API·클라이언트 지연 로그 처리 테스트
+tests/backend/traffic/              신호등 기본값·방향·흔들림·선택·추적 테스트
+tests/backend/walking/              보행 마스크·위험 판단·영상 내보내기 테스트
+tests/frontend/                     캡처·녹화·안내·오버레이·지연 로그 테스트
+tests/frontend/helpers/             브라우저 테스트용 음원 재생 보조 코드
 docs/traffic-signal.md               신호등 동작·검증 결과·한계
 docs/walking-risk.md                 도보 위험 판단 실행·설정·저장물
 ```
@@ -556,13 +578,14 @@ docs/walking-risk.md                 도보 위험 판단 실행·설정·저장
 .venv/bin/python -m pytest tests -q
 ```
 
-브라우저 코드 테스트에는 Node.js 가 필요합니다. 실제 카메라 없이 실행합니다.
+브라우저 코드 테스트에는 Node.js 가 필요합니다. 아래 명령은 저장소 루트에서 실행하며, 실제 카메라 없이 검사합니다.
 
 ```bash
-node tests/test_capture.cjs
-node tests/test_client_timings.cjs
-node tests/test_recorder.cjs
-node tests/test_guidance.cjs
+node tests/frontend/test_capture.cjs
+node tests/frontend/test_client_timings.cjs
+node tests/frontend/test_recorder.cjs
+node tests/frontend/test_guidance.cjs
+node tests/frontend/walking_overlay.test.cjs
 ```
 
 신호등 선택·추적·대상 변경, API·저장 오류, 마스크 픽셀, 캡처 대체 경로, 로그 재시도·안전 종료, 녹화 합성을 검사합니다. 공통 코드를 고쳤다면 push 전에 돌려 주세요.

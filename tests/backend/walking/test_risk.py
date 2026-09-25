@@ -45,7 +45,7 @@ def engine(identity=1, stable=True, config=None):
 class RiskTests(unittest.TestCase):
     def test_default_polygons_valid_and_bad_config_rejected(self):
         risk_config()
-        for cfg in ({"overlap_threshold":float("nan")},{"enabled":1},
+        for cfg in ({"overlap_threshold":float("nan")},{"enabled":True},
                     {"corridor_polygon":[[0,0],[1,1],[0,1],[1,0]]},
                     {"immediate_polygon":[[0,0],[1,0],[1,1],[0,1]]},
                     {"history_window_s":.1,"min_history_s":.2},{"typo":1}):

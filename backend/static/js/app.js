@@ -21,8 +21,6 @@
   // 기능별로 검증한 입력 크기와 전송 상한을 유지한다. 요청은 항상 하나씩 보낸다.
   const SETTINGS = { confidence: 0.4, image_max_side: 640, target_fps: 10, jpeg_quality: 0.8, timeout_ms: 5000, retry_wait_ms: 500 };
   const TRAFFIC_SETTINGS = { confidence: 0.25, image_max_side: 960, target_fps: 5 };
-  // 위험 판단 프로파일과 같은 검출 기준. 입력 크기·전송 상한은 공통값을 쓴다.
-  const WALKING_SETTINGS = { confidence: 0.25 };
   const MODE_LABEL = { traffic: "신호등", walking: "도보 장애물", bus: "버스" };
 
   const state = {
@@ -235,14 +233,14 @@
     showAlert(null);
     el.summary.hidden = true;
     el.btnStart.disabled = true;
-    const settings = { ...SETTINGS, ...(state.mode === "traffic" ? TRAFFIC_SETTINGS
-      : state.mode === "walking" ? WALKING_SETTINGS : {}) };
+    const settings = { ...SETTINGS, ...(state.mode === "traffic" ? TRAFFIC_SETTINGS : {}) };
     const body = {
       mode: state.mode,
       model_id: el.modelSelect.value,
       device_type: currentDevice(),
       note: el.note.value.trim(),
-      settings: { confidence: settings.confidence, image_max_side: settings.image_max_side,
+      settings: { ...(state.mode === "walking" ? {} : { confidence: settings.confidence }),
+        image_max_side: settings.image_max_side,
         target_fps: settings.target_fps, jpeg_quality: settings.jpeg_quality },
       client: { user_agent: navigator.userAgent, screen_width: screen.width, screen_height: screen.height, platform: navigator.platform || "", app_version: "walking-risk-v1" },
     };

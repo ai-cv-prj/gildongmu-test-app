@@ -9,7 +9,6 @@ import cv2
 import numpy as np
 
 DEFAULT_RISK = {
-    "enabled": False,
     "corridor_polygon": [[0.42, 0.45], [0.58, 0.45], [0.98, 1.0], [0.02, 1.0]],
     "immediate_polygon": [[0.205, 0.75], [0.795, 0.75], [0.98, 1.0], [0.02, 1.0]],
     "footprint_height_ratio": 0.15,
@@ -109,7 +108,7 @@ def _number(value, name, low, high=None, strictly_positive=False):
 
 def risk_config(value=None):
     cfg = _merge(value, DEFAULT_RISK, "risk")
-    for key in ("enabled", "ttc_alerts", "draw_roi", "log_jsonl", "review_overlay", "sidewalk_roi_enabled"):
+    for key in ("ttc_alerts", "draw_roi", "log_jsonl", "review_overlay", "sidewalk_roi_enabled"):
         if not isinstance(cfg[key], bool):
             raise ValueError(f"risk.{key} must be boolean")
     for key in ("corridor_polygon", "immediate_polygon"):

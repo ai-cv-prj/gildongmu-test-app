@@ -1,5 +1,5 @@
 # file_path: requirements.txt
-# 서버·테스트·보행 추론 패키지 목록
+# 서버·테스트·모델 추론 패키지 목록
 
 # 공통
 fastapi>=0.110
@@ -14,8 +14,15 @@ pydantic>=2.6
 pytest>=8
 httpx>=0.27
 
+# 모델 추론
+# GPU 사용 시 아래 명령으로 PyTorch를 먼저 설치한 뒤 이 파일을 설치한다.
+# WSL / CUDA 13.0:
+# python -m pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cu130
+torch==2.14.0
+torchvision==0.29.0
+ultralytics==8.4.152
+
 # 보행 추론 (Python 3.12 이상)
-# torch·torchvision·Ultralytics는 실행 환경에 맞춰 별도 설치
 # Python 3.14에서는 해당 wheel이 있는 lap 0.5.13 사용
 lap==0.5.12; python_version < "3.14"
 lap==0.5.13; python_version >= "3.14"

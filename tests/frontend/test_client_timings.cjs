@@ -1,5 +1,5 @@
 /**
- * 파일 경로: tests/test_client_timings.cjs
+ * file_path: tests/frontend/test_client_timings.cjs
  * API에 통합한 지연 로그 수집·재시도와 비동기 마스크 그리기를 검사한다.
  * 가짜 시계와 canvas를 사용하여 서버·카메라·파일 생성 없이 실행한다.
  */
@@ -403,13 +403,13 @@ async function appHarness(mode = "walking", { start = true, prefs = {}, storageA
   };
 }
 
-test("640px 전송 설정을 실제 캡처와 세션 기록에 동일하게 적용한다", async () => {
+test("보행 모드는 640px 캡처를 유지하고 탐지 신뢰도는 서버 기본값을 사용한다", async () => {
   const app = await appHarness();
   assert.deepEqual(app.captureOptions, [{ maxSide: 640, quality: 0.8 }]);
   assert.equal(app.sessionSettings.image_max_side, 640);
   assert.equal(app.sessionSettings.jpeg_quality, 0.8);
   assert.equal(app.sessionSettings.target_fps, 10);
-  assert.equal(app.sessionSettings.confidence, 0.25);
+  assert.equal(Object.hasOwn(app.sessionSettings, "confidence"), false);
   assert.equal(app.sessionClient.app_version, "walking-risk-v1");
   const stopping = app.stop();
   app.captured();

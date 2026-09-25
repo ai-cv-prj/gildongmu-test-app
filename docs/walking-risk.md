@@ -2,20 +2,19 @@
 
 기존 32클래스 YOLO26n에 integration의 보도 ROI·추적·위험 판단을 연결했다. 모델 ID와 YOLO 가중치는 유지한다. 실제 도보 모델을 선택하면 YOLO와 Mask2Former를 한 번 로딩하고, 앱에서 받은 각 프레임의 마스크로 같은 프레임의 ROI와 표면 경고를 판단한다. 화면의 ‘보도 마스크 표시’를 꺼도 보도 판단은 계속된다.
 
-## 환경과 Python 3.12 전환
+## Python 3.12 환경
 
-보행 위험 기능은 Python 3.12 이상을 기준으로 작성했다. 현재 앱의 Python 3.14 환경을 유지했고, 기존 integration Python 3.12 환경에서 실제 모델 두 개, 위험 엔진, 원본/마스크 저장, H.264 영상 출력을 검증했다. 3.12에서 FastAPI 서버 전체를 새 환경에 설치해 실행하는 검증은 하지 않았다.
+보행 위험 기능의 기준 버전은 Python 3.12다. 기존 integration Python 3.12 환경에서 실제 모델 두 개, 위험 엔진, 원본/마스크 저장, H.264 영상 출력을 검증했다.
 
 - 모델 공통 버전: torch 2.14.0+cu130, torchvision 0.29.0+cu130, ultralytics 8.4.152.
 - 서버·테스트·보도/영상 패키지: `requirements.txt`.
 - lap: Python 3.12는 integration과 같은 0.5.12, Python 3.14는 해당 wheel이 있는 0.5.13. 설치 파일의 환경 조건이 자동 선택한다.
 - transformers 5.17.0, scipy 1.18.1, PyYAML 6.0.3, Pillow 12.3.0, imageio-ffmpeg 0.6.0.
-- 3.14 전용 문법/API를 사용하지 않는다. 3.12 문법 파싱과 위험 회귀 테스트를 수행했다.
 
-추후 Python을 바꿀 때 현재 `.venv`의 Python 실행 파일만 바꾸거나 site-packages를 복사하지 않는다. 원하는 시점에 별도의 Python 3.12 가상환경을 만든 뒤, 해당 환경에 GPU용 torch/torchvision 및 Ultralytics를 설치하고 아래 설치 파일을 적용한다. 이 작업에서 현재 앱 환경을 3.12로 전환하지 않았다.
+다른 Python 버전의 가상환경을 3.12로 전환할 때는 실행 파일이나 site-packages를 교체하지 말고 Python 3.12로 새 가상환경을 만든다. 그 환경에 GPU용 torch/torchvision 및 Ultralytics를 설치하고 아래 설치 파일을 적용한다.
 
 ```bash
-# 앞으로 만들어 둔 Python 3.12 환경을 활성화한 상태에서 실행
+# Python 3.12 환경을 활성화한 상태에서 실행
 python -m pip install -r requirements.txt
 python -m pytest tests -q
 python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
@@ -25,9 +24,9 @@ python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
 
 ```text
 backend/models/walking/finetune_v2_exp02_stage2_best.pt
-backend/models/walking_aux/mask2former/config.json
-backend/models/walking_aux/mask2former/preprocessor_config.json
-backend/models/walking_aux/mask2former/model.safetensors
+backend/models/walking/mask2former_w/config.json
+backend/models/walking/mask2former_w/preprocessor_config.json
+backend/models/walking/mask2former_w/model.safetensors
 ```
 
 보조 모델은 모델 선택 목록에 별도로 노출되지 않는다. 다른 GPU/운영체제에서의 torch 설치는 그 환경에 맞춰 준비한다. 공용 requirements 파일은 GPU 패키지를 자동 업그레이드하지 않는다.
@@ -36,14 +35,14 @@ backend/models/walking_aux/mask2former/model.safetensors
 
 | 환경변수 | 기본값/의미 |
 | --- | --- |
-| WALKING_RISK_ENABLED | true. false이면 YOLO의 기존 임시 경고 경로로 복귀 |
-| WALKING_RISK_CONFIG | backend/config/walking_risk.yaml |
-| WALKING_MASK_WEIGHTS | backend/models/walking_aux/mask2former |
+| WALKING_RISK_ENABLED | true. 위험 판단의 유일한 켜기/끄기 설정. false이면 YOLO의 기존 임시 경고 경로로 복귀 |
+| WALKING_RISK_CONFIG | config/walking_risk.yaml |
+| WALKING_MASK_WEIGHTS | backend/models/walking/mask2former_w |
 | WALKING_PRECISION | fp32. fp16은 CUDA에서 Mask2Former autocast 사용 |
 | WALKING_FONT_PATH | 한글 TTF/TTC 경로. 비어 있으면 Linux Noto CJK 또는 Windows/WSL 맑은 고딕 탐색 |
 
-설정은 서버 재시작 후 적용한다. 기본 YOLO confidence는 도보·신호등 0.25, 버스 0.4다.
-도보 전송 기본값은 긴 변 640px·최대 10FPS이며 `backend/static/js/app.js`의 `SETTINGS`와 `WALKING_SETTINGS`에 있다. API 요청에서 confidence를 지정하면 지정한 값을 사용한다. 나머지 YOLO 조건은 imgsz 640, nms=None, iou 0.7, max_det 300, rect=True다. 위험 임계값과 추적 설정은 integration 프로파일을 그대로 이식했다. 모델의 전체 원본 입력을 ROI로 잘라내지 않는다.
+설정은 서버 재시작 후 적용한다. `config/walking_risk.yaml`의 `risk`에는 위험 판단 규칙만 두고, 켜기/끄기는 `.env`의 `WALKING_RISK_ENABLED`로 관리한다. 실제 보행 모델의 기본 YOLO confidence는 `config/walking_risk.yaml`의 `yolo.conf`에서 읽는다. 휴대폰의 보행 모드는 세션 요청에 confidence를 넣지 않으며, API 요청에서 confidence를 명시하면 요청값을 우선한다. 신호등 기본값은 0.25, 버스는 0.4다. 보행 Mock은 YOLO를 실행하지 않고 공통 세션 기본값 0.4를 사용한다.
+도보 전송 기본값은 긴 변 640px·최대 10FPS이며 `backend/static/js/app.js`의 `SETTINGS`에서 관리한다. 나머지 YOLO 조건은 imgsz 640, nms=None, iou 0.7, max_det 300, rect=True다. 위험 임계값과 추적 설정은 integration 프로파일을 그대로 이식했다. 모델의 전체 원본 입력을 ROI로 잘라내지 않는다.
 
 FP32가 기본이다. 앱 실측에서 통신·저장 포함 지연이 목표를 넘을 때 FP16 또는 마스크 갱신 주기를 별도로 검토한다. 현재 구현은 오래된 마스크를 새 관측처럼 재사용하지 않는다.
 
@@ -95,13 +94,13 @@ RTX 5080 Laptop GPU, 실제 저장 프레임 12장, FP32에서 초기화 이후 
 ## main 통합 후 바뀐 값 (2026-09-23)
 
 `main`의 실시간 지연 개선·탐지 영상 자동 저장·신호등 음성 안내와 합치면서 아래를 정리했다.
-README는 이번 작업에서 수정하지 않았으므로 도보 위험 관련 내용은 이 문서에서 관리한다.
+프로젝트 전체 실행 방법은 README에, 보행 위험 판단의 세부 설정은 이 문서에 기록한다.
 
 | 항목 | 정한 값 | 이유 |
 | --- | --- | --- |
 | 전송 해상도 | 긴 변 640px (main 공통값) | YOLO 입력이 640, 보도 마스크 입력이 384로 고정이라 960 업로드는 판단에 기여하지 않는다 |
 | 전송 상한 | 10FPS (main 공통값) | 0.6초 운동 이력의 표본이 늘고 프레임 간 카메라 이동량이 줄어 TTC·측방 진입 판단에 유리하다 |
-| 검출 신뢰도 | 0.25 (위험 판단 프로파일) | integration 검토가 이 값에서 나왔다. 올리면 검출이 줄어 경고 미발생이 늘어난다 |
+| 검출 신뢰도 | `config/walking_risk.yaml`의 `yolo.conf` | integration 검토 당시 0.25였다. 값을 올리면 검출이 줄어 경고 미발생이 늘어난다 |
 | 마스크 전송 | `mask_rle` 우선, `mask_png` 대체 | main의 표시 지연 개선을 유지한다 |
 | 결과 영상 | 보행 위험 세션은 `result_visualized.mp4`만 생성 | 고정 속도 영상(`annotated/results.mp4`)은 촬영 간격을 재현하지 못한다. 보행 세션의 `video_status`는 `walking_export`로 남는다 |
 

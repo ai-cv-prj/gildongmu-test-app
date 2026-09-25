@@ -1,4 +1,5 @@
 # Integration risk/tracking rules, plus explicit walking detector options.
+# Risk on/off is controlled only by WALKING_RISK_ENABLED in .env.
 yolo:
   conf: 0.25
   imgsz: 640
@@ -7,7 +8,6 @@ yolo:
   max_det: 300
   rect: true
 risk:
-  enabled: true
   corridor_polygon:
   - - 0.38
     - 0.30
